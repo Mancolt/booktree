@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+# replay output is large (stdout/OPF transcripts per book); the summary is committed separately
+tests/replay/out/
+# never commit live configs, logs, caches or sessions
+config/
+logs/
+__cache__/
+*.pkl
+# site-specific operational notes and handoffs
+docs/site/

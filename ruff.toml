@@ -1,0 +1,12 @@
+line-length = 140
+target-version = "py312"
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841", "B006", "B008", "S102", "S301", "S307", "S602", "S605"]
+
+[lint.per-file-ignores]
+# Inherited upstream modules are exempt from the style rules until they are refactored; new code is not.
+"booktree.py" = ["F401", "F841"]
+"myx_*.py" = ["F401", "F841"]
+# S301: pickle load of cookies.pkl — removed together with the secrets/cookie-store work (roadmap item 5)
+"myx_mam.py" = ["F401", "F841", "S301"]

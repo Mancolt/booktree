@@ -1,0 +1,37 @@
+{
+ "runs": 256,
+ "rows": 23892,
+ "books": 1576,
+ "logged_matched_books": 266,
+ "logged_hardlinked_rows": 2776,
+ "passes": {
+  "pass1": {
+   "audible_cache_hits": 870,
+   "adb_agree": 846,
+   "adb_disagree": 24,
+   "mam_cache_hits": 1426,
+   "matchFound": 590,
+   "exceptions": 0
+  },
+  "pass2": {
+   "audible_cache_hits": 963,
+   "adb_agree": 910,
+   "adb_disagree": 53,
+   "mam_cache_hits": 0,
+   "matchFound": 126,
+   "exceptions": 0
+  }
+ },
+ "target_path": {
+  "compared": 266,
+  "agree": 261
+ },
+ "opf": {
+  "generated": 266,
+  "bare_amp": 69,
+  "not_well_formed": 69
+ },
+ "stdout_sha_all": "ae625fd7cf79cdaf9d768dedc3f54189a8983545b6ef2ee9b661b9328fae3919",
+ "opf_sha_all": "a07477bb215500f17617def3c3a98ac0d872f131940faa3b64aeb18c3f74b634",
+ "seconds": 4.6
+}
