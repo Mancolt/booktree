@@ -491,13 +491,13 @@ def getAltTitle(parent, book, cfg):
     while True:
         #remove authors name in title
         for a in book.authors:
-            altTitle = re.sub(f"{a.name}", " ", altTitle, flags=re.IGNORECASE)
+            altTitle = re.sub(re.escape(a.name), " ", altTitle, flags=re.IGNORECASE)
             #print (f"remove {book.authors} >> {altTitle}")
 
         #remove series name in title
         if (not skipSeries):
             for s in book.series:
-                altTitle = re.sub(f"{s.name}", " ", altTitle, flags=re.IGNORECASE)
+                altTitle = re.sub(re.escape(s.name), " ", altTitle, flags=re.IGNORECASE)
             #print (f"remove {book.series} >> {altTitle}")
 
         #remove the numbers

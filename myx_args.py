@@ -20,6 +20,7 @@ def importArgs():
     parser.add_argument("--fixid3", default=None, action="store_true", help="If provided, will attempt to fix id3 metadata")
     parser.add_argument("--ebooks", default=None, action="store_true", help="If provided, will look for ebooks and skip audible")
     parser.add_argument("--add-narrators", default=None, action="store_true", help="If provided,include the narrators in the path")
+    parser.add_argument("--hints", default=None, metavar="JSON", help="Per-release hints (pinned ASIN, candidate ASINs, expected duration, search title/authors) keyed by release folder, file name or path; see CONFIG.md")
 
     # #you want a specific file or pattern
     # parser.add_argument("--file", default="", help="The file or files(s) you want to process.  Accepts * and ?. Defaults to *.m4b/*.mp3")
@@ -95,6 +96,9 @@ class Config(object):
 
                 if params.add_narrators is not None:
                     cfg["Config"]["flags"]["add_narrators"] = bool(params.add_narrators)   
+
+                if getattr(params, "hints", None) is not None:
+                    cfg["Config"]["hints_file"] = params.hints
 
             self._data = cfg            
         except Exception as e:

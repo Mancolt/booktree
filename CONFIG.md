@@ -53,6 +53,8 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | log_path    |         | Where your log files will be saved. If not set, will default to "logs" | /logs (for docker), logs (for local)   |
 | cache_path  |         | Where your log files will be saved. If not set, will default to "logs" | /config   |
 | session     |         | MAM Session ID (can be removed once one has been saved) |    |
+| hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
+| pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
 | paths       |         | This is a *list* of folders and files to be processed              |
 | | files               | File patterns to be searched | ["\*\*/\*.m4b", "\*\*/\*.mp3", "\*\*/\*.m4a"]    |
 | | source_path         | Unorganized folder location | /path/to/downloads   |
@@ -78,3 +80,42 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | | kw_ignore           | Characters ignored when generating keywords for search | | [".", ":", "_", "[", "]", "{", "}", ",", ";", "(", ")"]    |
 | | kw_ignore_words     | Characters ignored when optimizing keywords for search| ["the","and","m4b","mp3","series","audiobook","audiobooks", "book", "part", "track", "novel", "disc"]    |
 | | title_patterns      | ignores these patterns when alt Title is generated from bad id3 data | ["-end", "\bpart\b", "\btrack\b", "\bof\b",  "\bbook\b", "m4b", "\\(", "\\)", "_", "\\[", "\\]", "\\.", "\\s?-\\s?"]    |
+
+
+## Hints file (`--hints <json>` or `Config/hints_file`)
+
+A hints file lets something that knows more than the id3 tags (a request tracker, a review UI, you) steer the
+Audible match per release without touching the files. It is a JSON object keyed by the release as booktree names
+it (the folder under `source_path`, or the file name for a loose file), by the full path of the release folder, or
+by the full path of any file in it:
+
+~~~
+{
+  "Megan Fate Marshman - Relaxed.m4b":           {"asin": "B0C5Q9XJ1K"},
+  "/data/downloads/complete/audio/Some Folder":  {"candidates": ["B0ABC12345", "B0DEF67890"], "duration_min": 541},
+  "Brad Thor - Takedown Unabridged - Complete":  {"title": "Takedown", "authors": ["Brad Thor"], "duration_min": 612}
+}
+~~~
+
+| field | meaning |
+|---|---|
+| `asin` | Pinned ASIN. Authoritative: the Audible product is accepted without the title/author check (a runtime mismatch is only warned about). If Audible has no usable product for it, the normal search runs. |
+| `candidates` | Up to 10 ASINs, chosen by the caller (no title/author check). Each is fetched by ASIN; among those whose runtime is within 2 minutes of the expected duration the highest fuzzy score wins, then the closest runtime; if none is within 2 minutes, the best fuzzy score above `matchrate`. A candidate with the right runtime is accepted at any score, so only list candidates you would accept. |
+| `duration_min` | Expected runtime in minutes. Defaults to the total duration of the release's files. |
+| `title`, `authors` | Used for the Audible search instead of the id3 title/artist (at most 300 characters, 10 authors). A hinted `title` is used as-is, also with `--fixid3`. The logged `id3-*` columns still show the file's own tags. |
+
+An invalid hints file (or one over 16 MiB) stops the run before anything is processed. Path keys are matched
+against files under `source_path` only; a key such as `/data` never matches. In `log` mode (`fix.csv`) a non-empty
+`id3-asin` column is treated as a pinned ASIN; each row is processed on its own, so fill the column on every row of
+a multi-file release, and blank the `paths` column when re-pinning a row that was previously matched to the wrong
+book (otherwise the old target folder is reused).
+
+For a pinned match the `adb-matchRate` column holds the informational fuzzy score of the Audible product against the
+file's own tags, which may be well below `matchrate`; `isMatched` is `True` regardless. `Config/pin_max_runtime_delta_min`
+(default 0 = off) refuses a pin whose runtime differs from the expected duration by more than that many minutes and
+falls back to the normal search.
+
+Duration is evidence in every search: among results that pass the title/author check and the `matchrate`
+threshold, a result whose Audible runtime is within 2 minutes of the expected duration is preferred over one that
+is not; results with equal scores prefer the closer runtime. With no runtime information (files report no duration)
+the behaviour is unchanged: the first highest score wins.

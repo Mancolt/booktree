@@ -56,7 +56,7 @@ myx_mam.requests = SimpleNamespace(Session=_OfflineSession)   # searchMAM builds
 # ---------------------------------------------------------------- helpers
 def load_cfg(path, cache_path, log_path):
     params = SimpleNamespace(config_file=path, dry_run=None, verbose=True, no_cache=None, no_opf=None,
-                             multibook=None, ebooks=None, fixid3=None, add_narrators=None)
+                             multibook=None, ebooks=None, fixid3=None, add_narrators=None, hints=None)
     cfg = myx_args.Config(params)
     cfg._data["Config"]["cache_path"] = cache_path
     cfg._data["Config"]["log_path"] = log_path
