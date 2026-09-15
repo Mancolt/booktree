@@ -1,5 +1,5 @@
 {
   "name": "booktree",
   "user": "ubuntu",
-  "install": "sudo apt-get update && sudo apt-get install -y ffmpeg && sudo python3 -m pip install --break-system-packages --upgrade -r requirements.txt ruff bandit pip-audit"
+  "install": "sudo apt-get update && sudo apt-get install -y ffmpeg python3.12-venv && sudo python3 -m pip install --break-system-packages --upgrade -r requirements.txt ruff bandit pip-audit"
 }
