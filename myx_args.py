@@ -112,6 +112,15 @@ class Config(object):
                 if getattr(params, "json_log", None) is not None:
                     cfg["Config"]["json_log"] = params.json_log
 
+            # Local-run convenience: when the config carries no MAM session id, fall back to the
+            # MAM_SESSION environment variable so the cookie can come from a secret store instead of
+            # a committed config. MAM sessions are IP/ASN-locked, so this only helps when booktree
+            # runs from the network the session was created on (i.e. locally, not a Cloud Agent VM).
+            if isinstance(cfg.get("Config"), dict) and not cfg["Config"].get("session"):
+                env_session = os.environ.get("MAM_SESSION")
+                if env_session:
+                    cfg["Config"]["session"] = env_session
+
             self._data = cfg            
         except Exception as e:
             raise Exception(e)

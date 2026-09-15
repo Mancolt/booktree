@@ -52,7 +52,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | fuzzy_match |         | Fuzzy match algorithm: (partial, token_sort, ratio) | token_sort |
 | log_path    |         | Where your log files will be saved. If not set, will default to "logs" | /logs (for docker), logs (for local)   |
 | cache_path  |         | Where your log files will be saved. If not set, will default to "logs" | /config   |
-| session     |         | MAM Session ID (can be removed once one has been saved) |    |
+| session     |         | MAM Session ID (can be removed once one has been saved). When left empty/omitted, booktree falls back to the `MAM_SESSION` environment variable, so the cookie can come from a secret store instead of a committed config. **Note:** MAM sessions are IP/ASN-locked, so this only works when booktree runs from the network the session was created on (i.e. locally); it will not help from a Cloud Agent VM, which egresses from a datacenter ASN. |    |
 | hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
 | flags/parse_names | | Parse the release folder/file name (`Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`, `(Unabridged)` noise) and use it for the search where the id3 tags are empty or junk (`AudioTrack 01`, `unknown artist`, or a title that just repeats the file name). `--legacy-names` turns it off. | 1 |
 | pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
