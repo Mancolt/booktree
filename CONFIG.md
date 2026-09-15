@@ -65,6 +65,14 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | mam/max_queries_per_run | | Runaway guard: maximum MAM searches in one run (one container invocation); further searches are skipped with a message and those releases stay unmatched until the next run (0 = unlimited). The 6-second spacing is the real safety net; this only stops a loop | 3000 |
 | json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
 | refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
+| pins | | List of `RELEASE=ASIN` strings: use that Audible ASIN for the release and re-process it now; same as `--pin` (see [Hints file](#hints-file---hints-json-or-confighints_file)) | |
+| notify/ntfy_url | | [ntfy](https://ntfy.sh) topic URL to post the run summary to; empty = off. Token via `NTFY_TOKEN` (or `notify/ntfy_token`). See [After the run](#after-the-run-notifications-audiobookshelf-scan-dedupe) | |
+| notify/on | | When to post: `always`, `unmatched` (unmatched books or a failure), `failure` | unmatched |
+| notify/heartbeat_url | | URL fetched (GET) after a clean run: an Uptime Kuma push URL, healthchecks.io ping, ... | |
+| abs/url | | Audiobookshelf base URL; with `abs/library_id` and `ABS_API_TOKEN` (or `ABS_API_TOKEN_FILE`) a library scan is requested after a run that created hardlinks | |
+| abs/library_id | | The Audiobookshelf library to scan | |
+| abs/scan | | Set to 0 to keep the `abs` settings but not trigger scans | 1 |
+| dedupe_roots | | Directories of already-filed books; a matched release whose files are already hardlinked under one of them is reported instead of hardlinked again | [] |
 | paths       |         | This is a *list* of folders and files to be processed              |
 | | files               | File patterns to be searched | ["\*\*/\*.m4b", "\*\*/\*.mp3", "\*\*/\*.m4a"]    |
 | | source_path         | Unorganized folder location | /path/to/downloads   |
@@ -126,7 +134,7 @@ sessions are IP/ASN-locked: a cookie created on one network does not work from a
 |---|---|
 | 0 | every configured path was processed (matched or not) |
 | 1 | an unhandled error; the traceback is on stdout/stderr and, with `--json-log`, a final `run` record carries `exit_code` and `error` |
-| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
+| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a malformed `--pin`, an invalid `notify`/`abs`/`dedupe_roots` setting, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
 | 130 | interrupted |
 
 ## Hints file (`--hints <json>` or `Config/hints_file`)
@@ -151,6 +159,22 @@ by the full path of any file in it:
 | `duration_min` | Expected runtime in minutes. Defaults to the total duration of the release's files. |
 | `title`, `authors` | Used for the Audible search instead of the id3 title/artist (at most 300 characters, 10 authors). A hinted `title` is used as-is, also with `--fixid3`. The logged `id3-*` columns still show the file's own tags. |
 
+`--pin RELEASE=ASIN` (repeatable; `Config/pins` as a list) is the one-line form for the commonest correction: it is
+the same as a hint `{"asin": ASIN, "refresh": true}` for that release, so the release is re-processed now, ignoring
+its cached answers and its "already processed" marker, with the Audible product taken as authoritative:
+
+~~~
+booktree.py /Config/config.json --pin "Megan Fate Marshman - Relaxed.m4b=B0C5Q9XJ1K"
+~~~
+
+The release is named as booktree prints it after `Processing:` (or by path). A pin overrides an `asin` in the hints
+file for the same release; a malformed pin stops the run (exit 2); a pin that matched no release is reported at
+the end (`Warning: --pin ... matched no release in this run`). A pinned or refreshed release is scanned even when
+it is older than `Config/last_scan`, and is filed even when `dedupe_roots` finds its files already in a library
+(that copy is usually the wrong match being corrected). Hardlinks made by an earlier, wrong match are not removed:
+booktree never deletes anything under `media_path`. Pins apply to the normal (hybrid) modes; in `log` mode a row
+with `isMatched=True` is re-filed as logged and the `id3-asin` column is the way to change its ASIN.
+
 An invalid hints file (or one over 16 MiB) stops the run before anything is processed. Path keys are matched
 against files under `source_path` only; a key such as `/data` never matches. In `log` mode (`fix.csv`) a non-empty
 `id3-asin` column is treated as a pinned ASIN; each row is processed on its own, so fill the column on every row of
@@ -166,6 +190,54 @@ Duration is evidence in every search: among results that pass the title/author c
 threshold, a result whose Audible runtime is within 2 minutes of the expected duration is preferred over one that
 is not; results with equal scores prefer the closer runtime. With no runtime information (files report no duration)
 the behaviour is unchanged: the first highest score wins.
+
+## After the run: notifications, Audiobookshelf scan, dedupe
+
+These replace the wrapper scripts a hook or timer otherwise needs around booktree. All are off until configured,
+all are best effort: a dead endpoint is reported on stdout and never changes the outcome or the exit code.
+
+~~~
+"notify": {
+    "ntfy_url": "https://ntfy.sh/your-topic",
+    "on": "unmatched",
+    "heartbeat_url": "https://kuma.example/api/push/abc123?status=up&msg=booktree"
+},
+"abs": {
+    "url": "http://audiobookshelf:13378",
+    "library_id": "lib_c1u58o0jxtgb3nkj2y",
+    "scan": 1
+},
+"dedupe_roots": ["/data/media/audiobooks"]
+~~~
+
+**Notifications** (`notify`): after the last path, one message is posted to the ntfy topic. `on` decides when:
+`always`; `unmatched` (the default) when at least one book is unmatched or the run failed; `failure` only when the
+exit code is not 0. The message says how many books matched, lists up to ten unmatched releases, how many files
+were hardlinked and the CSV path; a failed run carries the exit code and the error. Priority is `high` for a
+failure, `default` when books need review, `low` otherwise. Release names in the message are cut at 120
+characters and the whole message at ntfy's size limit. A token for a protected topic comes from the environment
+variable `NTFY_TOKEN` (or `notify/ntfy_token`). The `heartbeat_url` is fetched only after a clean run (exit 0), so a
+monitor that expects the push notices a failed or missing run. Neither URL is printed: an ntfy topic name and a
+push URL's token are what lets anyone post to them. The message names your downloads and host paths, so use a
+token-protected or self-hosted topic over https rather than a guessable public one. Requests time out after 10
+seconds, are not retried and do not follow redirects.
+
+**Audiobookshelf scan** (`abs`): when a run created hardlinks (not in a dry run, not when nothing was new),
+`POST <url>/api/libraries/<library_id>/scan` is sent with the API token from `ABS_API_TOKEN` or the first line of
+the file named by `ABS_API_TOKEN_FILE` (docker/compose secret), so new books appear without waiting for the
+folder watcher. A missing token or library id is a configuration error (exit 2) rather than a silently skipped
+scan (the id may contain letters, digits, `-` and `_` only). Nothing else is read from or written to Audiobookshelf.
+
+**Dedupe** (`dedupe_roots`): booktree files a book by hardlinking its files, so two folders hold the same book
+when their media files are the same inodes. Before hardlinking a matched release, its source files are looked up
+in an index of the media files under the listed directories (built once per run); if one is found, the release
+is reported (`Already in the library at ...; not hardlinking ...`, `already_filed` in the JSON log) and left
+alone, but still logged as matched (with its target path) and marked processed. A release counts as filed only
+when every one of its files is, so an interrupted filing is completed on the next run; symlinks in a library do
+not count. Nothing is ever deleted. Typical values are your
+`media_path` (stops a second config from filing a clone of a book the first one already filed) or the libraries
+of other users on the same server. A root that contains, or lies inside, a `source_path` is refused, because the
+downloads themselves would then count as already filed.
 
 ## Release-name parsing (`flags/parse_names`, default on; `--legacy-names` to disable)
 
@@ -223,7 +295,7 @@ The CSV columns, file name and stdout are unchanged; the JSON log is the structu
  "match": {"asin": "B0C5Q9XJ1K", "title": "Relaxed", "authors": ["Megan Fate Marshman"], "narrators": ["..."],
            "series": "", "part": "", "runtime_min": 244, "match_rate": 100, "attempt": "parsed"},
  "expected_duration_min": 244.0, "runtime_delta_min": 0.0, "target_path": "/data/Audiobooks/Megan Fate Marshman/Relaxed",
- "hardlinked": true, "mam_count": 1, "audible_count": 1,
+ "hardlinked": true, "already_filed": null, "mam_count": 1, "audible_count": 1,
  "queries": [{"kind": "mam", "cache_key": "<sha256>", "cached": false, "expired": false, "results": 1, "text": "..."},
              {"kind": "audible", "cache_key": "<sha256>", "cached": false, "expired": false, "results": 1,
               "asin": "", "title": "Relaxed", "authors": "\"Megan Fate Marshman\"", "keywords": "relaxed megan fate marshman"}]}

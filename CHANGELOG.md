@@ -6,6 +6,17 @@ point is tag `upstream-baseline`.
 ## Unreleased
 
 ### Added
+- `--pin RELEASE=ASIN` (repeatable; `Config/pins`): use that Audible product for the release and re-process it
+  now, ignoring its cached answers and processed marker. Shorthand for a hint `{"asin": ..., "refresh": true}`;
+  a malformed pin exits 2, an unused one is reported at the end of the run.
+- `Config/notify`: end-of-run summary to an [ntfy](https://ntfy.sh) topic (`ntfy_url`, token via `NTFY_TOKEN`;
+  `on` = always / unmatched / failure) and a `heartbeat_url` fetched after a clean run. Best effort; URLs are not
+  printed.
+- `Config/abs`: request an Audiobookshelf library scan (`url`, `library_id`; token via `ABS_API_TOKEN` or
+  `ABS_API_TOKEN_FILE`) after a run that created hardlinks.
+- `Config/dedupe_roots`: a matched release whose files are already hardlinked under one of the listed
+  directories is reported (`already_filed` in the JSON log) and not hardlinked again; nothing is deleted. A root
+  containing a `source_path` is refused.
 - MAM session from the environment: when `Config/session` is empty, `MAM_SESSION` or the first line of the file
   named by `MAM_SESSION_FILE` (a docker/compose secret) is used, so the cookie no longer has to be repeated in
   every config file.

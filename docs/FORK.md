@@ -31,6 +31,7 @@ Scripts built on upstream booktree keep working:
 | 5 | MAM session duplicated in every config file and kept in a pickle; `title_patterns` contain `"\b"` JSON escapes that become backspaces; exit code is 0 on failure. Fixed: `MAM_SESSION` / `MAM_SESSION_FILE`, JSON cookie store, backspace patterns repaired, exit codes 0/1/2 (see CONFIG.md) | — |
 | 6 | `Series # - Title` folders: the log writes `seriesparts` as `Name part`, the log reader splits on `#` | #27 |
 | 6b | Multi-disc releases (`cd1/`, `Disc 01/`) are grouped per disc folder, so each disc is matched on its own, the runtime evidence is one disc long (the wrong edition can win), and `book` logs as `cd1..cdN`. Release-name parsing already resolves the release folder for the search; grouping the discs into one book is the remaining fix | #26 |
+| 8 | Everything around a run lived in per-host wrapper scripts (ntfy summary, Audiobookshelf scan, inode de-dupe, an ASIN fixer that rewrote `fix.csv`). Added as config, off by default: `notify`, `abs`, `dedupe_roots`, `--pin RELEASE=ASIN` (see CONFIG.md) | — |
 | 7 | mousehole cookie integration. Fixed: `mousehole_state_file` / `MOUSEHOLE_STATE_FILE`, reads mousehole's v2 (`cookie`) and legacy (`currentCookie`) state files (PR #24 read only the legacy key) | #24 |
 
 ## Regression replay

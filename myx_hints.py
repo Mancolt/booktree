@@ -123,15 +123,44 @@ def loadHintsFile(path):
     return hints
 
 
+def _names(value):
+    """A config list that may also be given as a single string; blanks dropped."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return [str(v) for v in value if str(v).strip()]
+
+
+def _hintKey(name):
+    return os.path.normpath(name) if str(name).startswith("/") else str(name)
+
+
+def parsePins(values):
+    """`--pin RELEASE=ASIN` entries (Config/pins) as {release key: ASIN}. Raises HintsError on a malformed entry;
+    a pin that cannot be applied must stop the run, not silently fall back to fuzzy matching."""
+    pins = {}
+    for raw in _names(values):
+        name, sep, asin = str(raw).rpartition("=")
+        if not sep or not name.strip():
+            raise HintsError(f"--pin {raw!r}: expected RELEASE=ASIN (the release folder/file name or path, then the Audible ASIN)")
+        key = _hintKey(name.strip())
+        asin = _asin(asin, f"--pin {name.strip()!r}")
+        if key in pins and pins[key] != asin:
+            raise HintsError(f"--pin {name.strip()!r} given twice with different ASINs")
+        pins[key] = asin
+    return pins
+
+
 def getHints(cfg):
     """Hints for this run ({} when none configured). Loaded once per file path. `--refresh NAME` entries
-    (Config/refresh, a list of release names or paths) become {"refresh": true} hints."""
+    (Config/refresh, a list of release names or paths) become {"refresh": true} hints; `--pin NAME=ASIN` entries
+    (Config/pins) become {"asin": ASIN, "refresh": true}: the operator is correcting a match, so the cached
+    answers and the processed marker for that release are ignored. A pin overrides an `asin` from the file."""
     path = cfg.get("Config/hints_file")
-    refresh = cfg.get("Config/refresh") or []
-    if isinstance(refresh, str):
-        refresh = [refresh]
-    refresh = [str(r) for r in refresh if str(r).strip()]
-    key = (path, tuple(refresh))
+    refresh = _names(cfg.get("Config/refresh"))
+    pins = _names(cfg.get("Config/pins"))
+    key = (path, tuple(refresh), tuple(pins))
     if key not in _cache:
         hints = {}
         if path:
@@ -140,8 +169,11 @@ def getHints(cfg):
             hints = loadHintsFile(path)
             print(f"Loaded {len(hints)} hint(s) from {path}")
         for name in refresh:
-            k = os.path.normpath(name) if str(name).startswith("/") else str(name)
-            hints.setdefault(k, {})["refresh"] = True
+            hints.setdefault(_hintKey(name), {})["refresh"] = True
+        for k, asin in parsePins(pins).items():
+            hint = hints.setdefault(k, {})
+            hint["asin"] = asin
+            hint["refresh"] = True
         _cache[key] = hints
     return _cache[key]
 
@@ -154,14 +186,17 @@ def noteRefreshApplied(hintKey):
 
 
 def warnUnusedRefresh(cfg):
-    """After a run: a --refresh name that matched no release is a typo the operator should hear about."""
-    refresh = cfg.get("Config/refresh") or []
-    if isinstance(refresh, str):
-        refresh = [refresh]
-    for name in refresh:
-        k = os.path.normpath(name) if str(name).startswith("/") else str(name)
-        if k not in _appliedRefresh:
+    """After a run: a --refresh or --pin name that matched no release is a typo the operator should hear about."""
+    for name in _names(cfg.get("Config/refresh")):
+        if _hintKey(name) not in _appliedRefresh:
             print(f"Warning: --refresh {name!r} matched no release in this run")
+    try:
+        pins = parsePins(cfg.get("Config/pins"))
+    except HintsError:
+        pins = {}
+    for k in pins:
+        if k not in _appliedRefresh:
+            print(f"Warning: --pin {k!r} matched no release in this run")
 
 
 def findHint(hints, name, paths=(), root=None):
