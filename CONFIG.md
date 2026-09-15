@@ -54,6 +54,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | cache_path  |         | Where your log files will be saved. If not set, will default to "logs" | /config   |
 | session     |         | MAM Session ID (can be removed once one has been saved) |    |
 | hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
+| flags/parse_names | | Parse the release folder/file name (`Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`, `(Unabridged)` noise) and use it for the search where the id3 tags are empty or junk (`AudioTrack 01`, `unknown artist`, or a title that just repeats the file name). `--legacy-names` turns it off. | 1 |
 | pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
 | paths       |         | This is a *list* of folders and files to be processed              |
 | | files               | File patterns to be searched | ["\*\*/\*.m4b", "\*\*/\*.mp3", "\*\*/\*.m4a"]    |
@@ -119,3 +120,23 @@ Duration is evidence in every search: among results that pass the title/author c
 threshold, a result whose Audible runtime is within 2 minutes of the expected duration is preferred over one that
 is not; results with equal scores prefer the closer runtime. With no runtime information (files report no duration)
 the behaviour is unchanged: the first highest score wins.
+
+## Release-name parsing (`flags/parse_names`, default on; `--legacy-names` to disable)
+
+Upstream searched Audible with the whole file name as the title when the id3 tags were missing, so
+`Megan Fate Marshman - Relaxed.m4b` became `title: megan fate marshman relaxed` and found nothing. booktree now
+parses the release name (the folder under `source_path`, or the file name for a loose file; for `cd1/` layouts the
+release folder) into title, author(s), series/part and ASIN, recognising `Author - Title`, `Title - Author`,
+`Title by Author`, `Author-Title`, `Author - Series NN - Title`, `Series NN - Title - Author`, `Title, Series Book N`,
+`Title [ASIN]`, `Title [ISBN10]`, `Title [Series NN]`, `Last, First` author order, leading track numbers, and
+strips `(Unabridged)`, `[M4B]`, bitrates, trailing years and "X narrator" fragments.
+
+The parse is used only where the tags are junk: an empty or `AudioTrack 01`-style title, or one that merely repeats
+the file name, is replaced by the parsed title; `unknown artist`/empty authors by the parsed authors; a missing ASIN
+by a bracketed one. Good tags are never overridden, hints take precedence, and the logged `id3-*` columns always
+show the file's own tags. Title and author are sent to Audible as separate fields, and a result must then agree
+with the parsed title (a same-author book with another title is rejected). When an attempt finds no acceptable
+match the next one runs, bounded and cached like any other query: the swapped reading when `Title - Author` and
+`Author - Title` are equally plausible, then the title alone (pen names, translators), and finally the search
+exactly as upstream performed it with the file's own tags, so a wrong parse can add a match but never lose one.
+The MAM ranking uses the same parsed values; the MAM query string is unchanged.

@@ -40,6 +40,24 @@ class OfflineClient:
         raise _Offline("offline replay: network disabled")
 
 
+class LiveAudibleClient:
+    """--audible-live: real Audible catalog calls (public API, no credentials) for queries missing from the
+    cache, paced and counted; responses are cached into the staged cache copy, never the live one."""
+    def __init__(self, pace=0.4):
+        import httpx
+        self.client = httpx.Client(timeout=20)
+        self.pace = pace
+        self.calls = 0
+        self.last = 0.0
+    def get(self, *a, **k):
+        wait = self.last + self.pace - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        self.last = time.time()
+        self.calls += 1
+        return self.client.get(*a, **k)
+
+
 class _OfflineSession:
     def __init__(self):
         self.headers = {}
@@ -51,6 +69,7 @@ class _OfflineSession:
 
 
 myx_mam.requests = SimpleNamespace(Session=_OfflineSession)   # searchMAM builds requests.Session()
+AUDIBLE_CLIENT = OfflineClient()
 
 
 # ---------------------------------------------------------------- helpers
@@ -111,7 +130,11 @@ def group_run(path):
         for row in reader:
             if i > 1:
                 f = str(row["file"])
-                bf = myx_classes.BookFile(f, f, str(row["sourcePath"]), str(row["mediaPath"]),
+                # hybrid mode stores the file path RELATIVE to the source path (iglob result); several upstream
+                # checks (isMultiBookCollection depth, parent-folder logic) depend on that
+                sp = str(row["sourcePath"]).rstrip("/")
+                rel = f[len(sp) + 1:] if sp and f.startswith(sp + "/") else f
+                bf = myx_classes.BookFile(rel, f, str(row["sourcePath"]), str(row["mediaPath"]),
                                           isHardlinked=(str(row["isHardLinked"]).lower() == "true"))
                 bf.ffprobeBook = book_from_row(row, "id3-")
                 bf.isMatched = (str(row["isMatched"]).lower() == "true")
@@ -156,7 +179,7 @@ def replay_book(mb, cfgs, out_dirs, run):
         b.metadata = "id3"
         for bf in mb.files:
             nbf = myx_classes.BookFile(bf.file, bf.fullPath, bf.sourcePath, bf.mediaPath)
-            nbf.ffprobeBook = book_from_row(next(r for r in rows if r["file"] == bf.file), "id3-")
+            nbf.ffprobeBook = book_from_row(next(r for r in rows if r["file"] == bf.fullPath), "id3-")
             b.files.append(nbf)
         b.ffprobeBook = b.files[0].ffprobeBook
         metadata = cfg.get("Config/metadata")
@@ -174,7 +197,7 @@ def replay_book(mb, cfgs, out_dirs, run):
                         src = b.bestMAMMatch
                     if src is None:
                         src = b.ffprobeBook
-                    b.getAudibleBooks(OfflineClient(), src, cfg)
+                    b.getAudibleBooks(AUDIBLE_CLIENT, src, cfg)
                     if b.bestAudibleMatch is not None:
                         b.metadata = "audible"
                 print(f"Found {len(b.mamMatches)} MAM matches, {len(b.audibleMatches)} Audible Matches")
@@ -194,7 +217,13 @@ def replay_book(mb, cfgs, out_dirs, run):
             "audibleMatches": len(b.audibleMatches or []), "mamMatches": len(b.mamMatches or []),
             "best_adb_asin": b.bestAudibleMatch.asin if b.bestAudibleMatch else "",
             "best_adb_rate": b.bestAudibleMatch.matchRate if b.bestAudibleMatch else "",
+            "best_adb_title": b.bestAudibleMatch.title if b.bestAudibleMatch else "",
+            "best_adb_authors": b.bestAudibleMatch.getAuthors() if b.bestAudibleMatch else "",
+            "best_adb_length": b.bestAudibleMatch.length if b.bestAudibleMatch else "",
             "best_mam_asin": b.bestMAMMatch.asin if b.bestMAMMatch else "",
+            "best_mam_title": b.bestMAMMatch.title if b.bestMAMMatch else "",
+            "best_mam_authors": b.bestMAMMatch.getAuthors() if b.bestMAMMatch else "",
+            "expected_duration_min": b.getExpectedDuration() if hasattr(b, "getExpectedDuration") else b.getRunTimeLength(),
             "matchFound": b.matchFound(), "search_title_used": b.ffprobeBook.title,
             "stdout_sha": sha(text), "stdout_lines": len(text.splitlines()),
         })
@@ -250,7 +279,10 @@ def main():
     ap.add_argument("--config", action="append", required=True, help="tag=path, e.g. pass1=/Config/config.json")
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--audible-live", action="store_true", help="fetch uncached Audible queries from the real API (MAM stays offline)")
     a = ap.parse_args()
+    global AUDIBLE_CLIENT
+    AUDIBLE_CLIENT = LiveAudibleClient() if a.audible_live else OfflineClient()
 
     out_dirs = {k: os.path.join(a.out, k) for k in ("stdout", "opf")}
     for d in out_dirs.values():
@@ -301,6 +333,7 @@ def main():
     summary["stdout_sha_all"] = summary["stdout_sha_all"].hexdigest()
     summary["opf_sha_all"] = summary["opf_sha_all"].hexdigest()
     summary["seconds"] = round(time.time() - t0, 1)
+    summary["live_audible_calls"] = getattr(AUDIBLE_CLIENT, "calls", 0)
     with open(os.path.join(a.out, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=1)
     print(json.dumps(summary, indent=1))

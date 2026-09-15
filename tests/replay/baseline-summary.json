@@ -6,9 +6,9 @@
  "logged_hardlinked_rows": 2776,
  "passes": {
   "pass1": {
-   "audible_cache_hits": 870,
-   "adb_agree": 846,
-   "adb_disagree": 24,
+   "audible_cache_hits": 1206,
+   "adb_agree": 939,
+   "adb_disagree": 267,
    "mam_cache_hits": 1426,
    "matchFound": 590,
    "exceptions": 0
@@ -31,7 +31,8 @@
   "bare_amp": 69,
   "not_well_formed": 69
  },
- "stdout_sha_all": "ae625fd7cf79cdaf9d768dedc3f54189a8983545b6ef2ee9b661b9328fae3919",
+ "stdout_sha_all": "fdd94f57b043d9fc51f742ba0bff7f22385e8e71284eb3b6254be9a8a67d43a4",
  "opf_sha_all": "a07477bb215500f17617def3c3a98ac0d872f131940faa3b64aeb18c3f74b634",
- "seconds": 4.6
+ "seconds": 4.8,
+ "live_audible_calls": 0
 }

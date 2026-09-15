@@ -44,6 +44,10 @@ writes into a media library that Audiobookshelf then parses. Report findings onl
 
 ## How to work
 
+* Containers: run your probes with `docker run --rm --name review-<random>` and clean up ONLY by that exact
+  name. Never kill, stop or remove containers you did not start, and never use `docker ps --filter ancestor=...`
+  or any other broad selector with `kill`/`rm`: other services on this host share base images with your probes.
+
 * `git diff` (or the given range), then read the surrounding functions. Grep for every new `open(`, `os.`,
   `shutil.`, `subprocess`, `pickle`, `requests`, `httpx`, `re.compile`, `print(` in the change.
 * Run `bandit -q -r . -x ./tests -ll` and `pip-audit -r requirements.txt` if available and include real results.

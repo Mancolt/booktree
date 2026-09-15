@@ -20,6 +20,7 @@ def importArgs():
     parser.add_argument("--fixid3", default=None, action="store_true", help="If provided, will attempt to fix id3 metadata")
     parser.add_argument("--ebooks", default=None, action="store_true", help="If provided, will look for ebooks and skip audible")
     parser.add_argument("--add-narrators", default=None, action="store_true", help="If provided,include the narrators in the path")
+    parser.add_argument("--legacy-names", default=None, action="store_true", help="Disable release-name parsing (Author - Title, Title [ASIN], ...) and search with the raw id3/file name as upstream did")
     parser.add_argument("--hints", default=None, metavar="JSON", help="Per-release hints (pinned ASIN, candidate ASINs, expected duration, search title/authors) keyed by release folder, file name or path; see CONFIG.md")
 
     # #you want a specific file or pattern
@@ -99,6 +100,9 @@ class Config(object):
 
                 if getattr(params, "hints", None) is not None:
                     cfg["Config"]["hints_file"] = params.hints
+
+                if getattr(params, "legacy_names", None):
+                    cfg["Config"]["flags"]["parse_names"] = 0
 
             self._data = cfg            
         except Exception as e:
