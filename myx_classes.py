@@ -423,6 +423,8 @@ class MAMBook:
     pinnedAsin:str=""
     hint:dict=None
     parsedName:dict=None
+    refresh:bool=False
+    matchAttempt:str=""
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
@@ -443,6 +445,8 @@ class MAMBook:
             self.hint = hint
             if hint.get("asin"):
                 self.pinnedAsin = hint["asin"]
+            if hint.get("refresh"):
+                self.refresh = True
             print(f"Applying hint for {self.name}: {hint}")
         return hint
 
@@ -519,7 +523,7 @@ class MAMBook:
         fuzzy_match = cfg.get("Config/fuzzy_match")
         maxDelta = float(cfg.get("Config/pin_max_runtime_delta_min", 0) or 0)
         print(f"Using pinned ASIN {self.pinnedAsin} for {self.name}")
-        products = myx_audible.getAudibleBook(client, cfg, asin=self.pinnedAsin, language=language)
+        products = myx_audible.getAudibleBook(client, cfg, asin=self.pinnedAsin, language=language, refresh=self.refresh)
         self.audibleMatches = products or []
         if verbose:
             print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
@@ -543,6 +547,7 @@ class MAMBook:
                 print(f"\tWarning: pinned ASIN runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min")
             print(f"Pinned ASIN {abook.asin} accepted: {abook.title} by {abook.getAuthors()}")
             self.bestAudibleMatch = abook
+            self.matchAttempt = "pinned"
             return abook
         #nothing accepted: do not leave the rejected product behind as a "match" in the log
         self.audibleMatches = []
@@ -815,8 +820,9 @@ class MAMBook:
                 print(f"Fetching {len(hintCandidates)} hinted candidate ASIN(s) for {self.name}")
                 books=[]
                 for candidate in hintCandidates:
-                    books.extend(myx_audible.getAudibleBook (client, cfg, asin=candidate, language=language) or [])
-                self._rankAudible(books, book, keys, cfg, hintCandidates=True)
+                    books.extend(myx_audible.getAudibleBook (client, cfg, asin=candidate, language=language, refresh=self.refresh) or [])
+                if self._rankAudible(books, book, keys, cfg, hintCandidates=True) is not None:
+                    self.matchAttempt = "candidates"
             else:
                 attempts = self._audibleAttempts(book, cfg, searchAsin)
                 for label, sBook, sAsin, requireTitle in attempts:
@@ -833,12 +839,13 @@ class MAMBook:
                         sBook.title = myx_utilities.getAltTitle (self.name, sBook, cfg) 
                     keys = self._audibleSearchKeys(sBook, cfg)
                     if add_narrators:
-                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], narrators=keys["narrators"], keywords=keys["keywords"], language=language)
+                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], narrators=keys["narrators"], keywords=keys["keywords"], language=language, refresh=self.refresh)
                     else:
-                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], keywords=keys["keywords"], language=language)
+                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], keywords=keys["keywords"], language=language, refresh=self.refresh)
                     #title-only: the title is verified by the gate and no author is known to score with, so a runtime
                     #within tolerance is accepted on its own (pickBest requireRate=False)
                     if self._rankAudible(books, sBook, keys, cfg, requireTitle=requireTitle, runtimeAlone=(label == "title-only")) is not None:
+                        self.matchAttempt = label
                         break
         #end if
 
@@ -981,14 +988,14 @@ class MAMBook:
     
         # Search using book key and authors (using or search in case the metadata is bad)
         print(f"Searching MAM for\n\tTitleFilename: {title}\n\tauthors:{authors}")
-        books=myx_mam.getMAMBook(cfg, titleFilename=title, authors=authors, extension=extension)
+        books=myx_mam.getMAMBook(cfg, titleFilename=title, authors=authors, extension=extension, refresh=self.refresh)
 
         # was the author inaccurate? (Maybe it was LastName, FirstName or accented)
         # print (f"Trying again because Filename, Author = {len(self.mamMatches)}")
         if len(books) == 0:
             #try again, without author this time
             print(f"Widening MAM search using just\n\tTitleFilename: {title}")
-            books=myx_mam.getMAMBook(cfg, titleFilename=title, extension=extension)
+            books=myx_mam.getMAMBook(cfg, titleFilename=title, extension=extension, refresh=self.refresh)
 
         #Find the best match
         self.mamMatches = books

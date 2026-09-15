@@ -6,6 +6,20 @@ point is tag `upstream-baseline`.
 ## Unreleased
 
 ### Added
+- Cache freshness (`cache/*_hours`): empty Audible answers (and title-less per-ASIN skeletons) are retried after
+  6 hours, non-empty ones after 30 days; MAM answers after 24 hours / 7 days. Errors are never cached. Same
+  cache files and names as upstream. Retires the weekly prune script.
+- MAM traffic rules: requests spaced 6 s apart (the safety net); a per-run cap of 3000 searches as a runaway
+  guard (`mam/*`). Empty MAM answers are now
+  cached for 24 h instead of being re-asked on every run.
+- `--refresh RELEASE` (or `"refresh": true` in a hint): re-process one release ignoring its cached answers and
+  processed marker.
+- `--json-log [PATH]`: JSON-lines run log with one record per book (parsed name, hint, pin, match, attempt,
+  runtime delta, target path, every query with its cache key) and a run summary. Additive: CSV and stdout unchanged.
+  Writing it can never fail the run; log files are opened without following symlinks (the CSV too).
+- Hints are looked up before the "already processed" check, so `Applying hint for …` now precedes `Processing: …`
+  and also appears for releases that are skipped as already processed.
+- The MAM session cookie is tested once per run instead of before every search (halves MAM requests).
 - Release-name parsing before the search (`flags/parse_names`, default on; `--legacy-names` restores the old
   behaviour): `Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`,
   `(Unabridged)` and format noise. Used only where the id3 tags are empty or junk; title and author are sent to

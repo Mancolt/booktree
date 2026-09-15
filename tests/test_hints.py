@@ -131,3 +131,31 @@ class HardeningTest(unittest.TestCase):
     def test_hint_keyed_by_any_file_of_a_release(self):
         hints = {"/src/Rel/02.mp3": {"asin": "B0000000F2"}}
         self.assertEqual(myx_hints.findHint(hints, "Rel", ["/src/Rel/01.mp3", "/src/Rel/02.mp3"], root="/src")["asin"], "B0000000F2")
+
+
+class RefreshTest(unittest.TestCase):
+    def test_refresh_must_be_boolean(self):
+        self.assertEqual(myx_hints.normalizeHint({"refresh": True}), {"refresh": True})
+        self.assertEqual(myx_hints.normalizeHint({"refresh": False}), {"refresh": False})
+        for bad in ("false", "true", 1, "yes"):
+            with self.assertRaises(myx_hints.HintsError):
+                myx_hints.normalizeHint({"refresh": bad})
+
+    def test_cli_refresh_names_become_hints_and_unmatched_ones_warn(self):
+        import contextlib, io
+        from tests.support import FakeConfig
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/refresh": ["Some Release", "/src/Other/"]})
+            myx_hints._cache.clear(); myx_hints._appliedRefresh.clear()
+            hints = myx_hints.getHints(cfg)
+            self.assertEqual(hints, {"Some Release": {"refresh": True}, "/src/Other": {"refresh": True}})
+            self.assertEqual(myx_hints.findHint(hints, "Some Release", ["/src/Some Release/a.m4b"], root="/src"), {"refresh": True})
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                myx_hints.warnUnusedRefresh(cfg)
+            self.assertNotIn("'Some Release'", out.getvalue())
+            self.assertIn("Warning: --refresh '/src/Other/' matched no release in this run", out.getvalue())
+            # a single string in the config file is one name, not a list of characters
+            myx_hints._cache.clear()
+            cfg2 = FakeConfig(td, **{"Config/refresh": "My Book"})
+            self.assertEqual(list(myx_hints.getHints(cfg2)), ["My Book"])
