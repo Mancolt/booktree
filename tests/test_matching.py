@@ -391,6 +391,37 @@ class ParsedNameSafetyTest(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
         self.assertNotIn("No match; retrying", out)
 
+    def test_filename_asin_does_not_override_usable_id3_title(self):
+        # folder has another book by the same author; usable tags must search by title, not pin that ASIN.
+        # requireTitle is only set when the parsed title replaced a junk tag, so an ASIN-only apply
+        # would accept the wrong product through the author gate and file the book under the wrong title.
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(
+                by_asin={"B0WRONG001": product("B0WRONG001", "The First Commandment", ["Brad Thor"], 330)},
+                search=[product("B0RIGHT000", "Takedown", ["Brad Thor"], 400)],
+            )
+            mb = mambook("Brad Thor - Takedown [B0WRONG001]", id3_book("Takedown", ["Brad Thor"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RIGHT000")
+        self.assertEqual(best.title, "Takedown")
+        self.assertTrue(all(u.endswith("/catalog/products") for u, _ in client.calls), client.calls)
+        self.assertNotIn("Using parsed release name", out)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_filename_asin_is_ignored_when_id3_title_is_usable_even_if_artist_is_junk(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(
+                by_asin={"B0WRONG001": product("B0WRONG001", "The First Commandment", ["Brad Thor"], 330)},
+                search=[product("B0RIGHT000", "Takedown", ["Brad Thor"], 400)],
+            )
+            mb = mambook("Brad Thor - Takedown [B0WRONG001]", id3_book("Takedown", ["unknown artist"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RIGHT000")
+        self.assertEqual(best.title, "Takedown")
+        self.assertTrue(all(u.endswith("/catalog/products") for u, _ in client.calls), client.calls)
+
 
 class NarratorInArtistTagTest(unittest.TestCase):
     def secrets(self):
