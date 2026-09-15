@@ -8,5 +8,7 @@ config/
 logs/
 __cache__/
 *.pkl
+cookies.json
+state.json
 # site-specific operational notes and handoffs
 docs/site/

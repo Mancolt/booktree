@@ -11,7 +11,7 @@ writes into a media library that Audiobookshelf then parses. Report findings onl
 ## Threat model
 
 * **Untrusted input:** file names and folder names under `source_path`; id3 tags read via ffprobe; every field of
-  Audible and MAM API responses; the contents of the cache directory and `cookies.pkl` (world-readable dirs on the
+  Audible and MAM API responses; the contents of the cache directory and the cookie store `cookies.json` (shared dirs on the
   host); CSV log rows fed back in log mode (`fix.csv`); `--hints` JSON; mousehole `state.json`.
 * **Assets:** the MAM session cookie (account ban / hit-and-run exposure if leaked or over-used), the seeded torrent
   files (any write = data loss for the swarm and a tracker violation), the media library, the host filesystem
@@ -26,8 +26,8 @@ writes into a media library that Audiobookshelf then parses. Report findings onl
    OPF/cover destinations, cache files keyed by hash, calibre ingest path) must resolve under the intended root.
    Check `sanitize_filename` is applied to each component, that `..`, leading `/`, and empty components cannot
    escape, and that nothing is created under `source_path`.
-3. **Deserialization and injection.** `pickle.load` of `cookies.pkl` from a shared directory is arbitrary code
-   execution if the file is replaced; flag any new pickle use and recommend a plain-text/JSON cookie store. XML/OPF:
+3. **Deserialization and injection.** No pickle anywhere (upstream's `cookies.pkl` was replaced by a JSON store
+   because unpickling a file from a shared directory is arbitrary code execution); flag any new pickle use. XML/OPF:
    all text nodes escaped or CDATA-safe (`]]>` inside CDATA). Shell: subprocess must use argument lists, never
    `shell=True` with metadata. Regex: patterns built from metadata must be `re.escape`d (upstream `getAltTitle` and
    `getCleanTitle` interpolate author/series names into regexes). JSON from MAM (`author_info` etc.) parsed with

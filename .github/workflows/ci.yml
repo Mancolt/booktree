@@ -27,9 +27,7 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Static security scan (bandit)
-        # high severity gates the build now; the two inherited medium findings (pickle load of cookies.pkl in
-        # myx_mam.py) are removed with the secrets/cookie-store work, after which this tightens to -ll
-        run: bandit -q -r . -x ./tests -lll
+        run: bandit -q -r . -x ./tests -ll
       - name: Dependency audit
         run: pip-audit -r requirements.txt
       - name: Secret scan (gitleaks)

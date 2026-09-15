@@ -6,6 +6,31 @@ point is tag `upstream-baseline`.
 ## Unreleased
 
 ### Added
+- MAM session from the environment: when `Config/session` is empty, `MAM_SESSION` or the first line of the file
+  named by `MAM_SESSION_FILE` (a docker/compose secret) is used, so the cookie no longer has to be repeated in
+  every config file.
+- mousehole integration (upstream PR #24, reworked): `Config/mousehole_state_file` or `MOUSEHOLE_STATE_FILE`
+  names a [mousehole](https://github.com/t-mart/mousehole) `state.json`; the cookie is read from it on every run
+  and sent verbatim. Reads mousehole's current schema (`version: 2`, key `cookie`) as well as the legacy
+  `currentCookie` the PR targeted. Falls back to the cookie store and the config session when the file is
+  unusable. Nothing is written back.
+- Exit codes: 0 when every configured path was processed, 2 for configuration/input problems (config file,
+  paths, hints file, log-mode input, MAM session), 1 for an unhandled error, 130 when interrupted. Configuration
+  problems print a message instead of a traceback. With `--json-log`, a run that fails with an unhandled error
+  still appends a `run` record carrying `exit_code` and `error`.
+
+### Changed
+- The cookie store is `<log_path>/cookies.json` (owner-readable, written atomically) instead of `cookies.pkl`.
+  A pickle from a shared directory was loaded on every run, which executes whatever the file contains; an existing
+  `cookies.pkl` is removed, never loaded, and the next run re-validates from the config/env session. The MAM
+  cookie is checked once per run at start-up; the session check before the first search is skipped when that
+  check already passed (one MAM request fewer per run). A session rejected by MAM falls through to the next
+  source (mousehole → cookie store → config/env) instead of failing outright; when MAM cannot be reached at all
+  the store is kept (upstream deleted the pickle on any error). The cookie is kept in the session's jar under
+  MAM's own domain, so a rotation MAM sends back replaces it and is the value persisted. Session files are read
+  through the descriptor (a planted FIFO or a huge file at the path cannot hang the run) and a value that is not
+  a valid cookie value is refused before any request is made.
+- CI: bandit now gates on medium severity (`-ll`) and the `S301` (pickle) lint exemption is gone.
 - Cache freshness (`cache/*_hours`): empty Audible answers (and title-less per-ASIN skeletons) are retried after
   6 hours, non-empty ones after 30 days; MAM answers after 24 hours / 7 days. Errors are never cached. Same
   cache files and names as upstream. Retires the weekly prune script.
@@ -33,6 +58,10 @@ point is tag `upstream-baseline`.
 - `Config/pin_max_runtime_delta_min`: optional hard limit on the runtime mismatch of a pinned ASIN (default off).
 
 ### Fixed
+- `title_patterns`: the template and CONFIG.md wrote word boundaries as `"\bpart\b"`, which JSON reads as the word
+  between two backspace characters, so `part`, `track`, `of` and `book` were never removed from an alternative
+  title. The examples now read `"\\bpart\\b"`, and a pattern containing a backspace is read as the intended `\b`
+  (with a one-time note), so existing config files work without editing.
 - A usable id3 title is no longer overridden by an ASIN parsed from the release name. `applyParsedName`
   used to send that ASIN to Audible even when the tags were good, and `_rankAudible` skipped the title
   gate (`requireTitle` is only set when the parsed title replaced a junk tag), so a leftover or wrong

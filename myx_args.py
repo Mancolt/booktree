@@ -2,6 +2,7 @@ import argparse
 import os
 import json
 from pprint import pprint
+import myx_session
 
 #Module Variables
 params:any
@@ -49,6 +50,21 @@ def importArgs():
 
     #set module variable to args
     return args
+
+def readSecretFile(path):
+    """The first non-empty line of a secret file (MAM_SESSION_FILE), or "". Problems are reported by path only."""
+    if not path:
+        return ""
+    text, why = myx_session.readSmallText(path, limit=65536)
+    if text is None:
+        print(f"Could not read MAM_SESSION_FILE {path}: {why}")
+        return ""
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    print(f"MAM_SESSION_FILE {path} is empty")
+    return ""
+
 
 def merge_dictionaries_recursively (dict1, dict2):
     """ Update two config dictionaries recursively.
@@ -112,12 +128,13 @@ class Config(object):
                 if getattr(params, "json_log", None) is not None:
                     cfg["Config"]["json_log"] = params.json_log
 
-            # Local-run convenience: when the config carries no MAM session id, fall back to the
-            # MAM_SESSION environment variable so the cookie can come from a secret store instead of
-            # a committed config. MAM sessions are IP/ASN-locked, so this only helps when booktree
-            # runs from the network the session was created on (i.e. locally, not a Cloud Agent VM).
+            # When the config carries no MAM session id, fall back to the MAM_SESSION environment variable,
+            # then to the first line of the file named by MAM_SESSION_FILE (docker/compose secrets), so the
+            # cookie can come from a secret store instead of being repeated in every config file. MAM sessions
+            # are IP/ASN-locked, so this only helps when booktree runs from the network the session was
+            # created on (i.e. locally, not a Cloud Agent VM).
             if isinstance(cfg.get("Config"), dict) and not cfg["Config"].get("session"):
-                env_session = os.environ.get("MAM_SESSION")
+                env_session = os.environ.get("MAM_SESSION") or readSecretFile(os.environ.get("MAM_SESSION_FILE"))
                 if env_session:
                     cfg["Config"]["session"] = env_session
 
