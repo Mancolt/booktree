@@ -2,13 +2,68 @@ import requests
 import json
 import os
 import pickle
+import time
 from pprint import pprint
 import myx_classes
 import myx_utilities
+import myx_jsonlog
+
+
+#MAM traffic rules: MAM sessions are IP/ASN-locked and rate-sensitive, so every HTTP request to MAM is spaced
+#(Config/mam/min_interval_seconds, default 6) and the number of searches per run is bounded
+#(Config/mam/max_queries_per_run, default 60). Cache hits cost nothing.
+_lastMamRequest = 0.0
+_mamQueriesThisRun = 0
+_cookieTestedThisRun = False
+_warnedKnobs = set()
+_sleep = time.sleep
+_now = time.time
+DEFAULT_INTERVAL = 6.0
+DEFAULT_BUDGET = 60
+
+
+def _knob(cfg, key, default, lo, hi, cast):
+    """A validated numeric config value: invalid or out of range falls back to the default with one warning."""
+    raw = cfg.get(f"Config/mam/{key}")
+    if raw is None or raw == "":
+        return default
+    try:
+        value = cast(float(raw))
+        if value != value or not (lo <= value <= hi):
+            raise ValueError("out of range")
+        return value
+    except (TypeError, ValueError, OverflowError):
+        if key not in _warnedKnobs:
+            _warnedKnobs.add(key)
+            print(f"Ignoring invalid Config/mam/{key}={raw!r}, using {default}")
+        return default
+
+
+def _throttle(cfg):
+    """Keep at least min_interval_seconds between consecutive HTTP requests to MAM."""
+    global _lastMamRequest
+    interval = _knob(cfg, "min_interval_seconds", DEFAULT_INTERVAL, 0.0, 3600.0, float)
+    wait = _lastMamRequest + interval - _now()
+    if wait > 0:
+        _sleep(wait)
+    _lastMamRequest = _now()
+
+
+def _budgetLeft(cfg):
+    limit = _knob(cfg, "max_queries_per_run", DEFAULT_BUDGET, 0, 100000, int)
+    return limit <= 0 or _mamQueriesThisRun < limit
+
+
+def resetRunCounters():
+    global _mamQueriesThisRun, _lastMamRequest, _cookieTestedThisRun
+    _mamQueriesThisRun = 0
+    _lastMamRequest = 0.0
+    _cookieTestedThisRun = False
 
 
 #MAM Functions
-def searchMAM(cfg, titleFilename, authors, extension):
+def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
+    global _mamQueriesThisRun
     #Config
     session = cfg.get("Config/session")
     log_path = cfg.get("Config/log_path")
@@ -29,11 +84,24 @@ def searchMAM(cfg, titleFilename, authors, extension):
     #cache results for this search string
     cacheKey=myx_utilities.getHash(search)
     
-    if myx_utilities.isCached(cacheKey, "mam", cfg):
+    cachedResults = None
+    if myx_utilities.isCached(cacheKey, "mam", cfg, refresh=refresh):
         #this search has been done before, load results from cache
-        results = myx_utilities.loadFromCache(cacheKey, "mam", cfg)
-        return (results["data"])
-    
+        cachedResults = myx_utilities.loadFromCache(cacheKey, "mam", cfg)
+        if not isinstance(cachedResults, dict):
+            print(f"Ignoring malformed MAM cache entry {cacheKey}, searching again")
+            cachedResults = None
+
+    if cachedResults is not None:
+        data = cachedResults.get("data")
+        myx_jsonlog.noteQuery("mam", cacheKey, True, len(data or []), text=search)
+        return data
+
+    elif not _budgetLeft(cfg):
+        print(f"MAM query budget for this run exhausted ({_mamQueriesThisRun} searches): skipping MAM search")
+        myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search, skipped="budget")
+        return None
+
     else:
         #save cookie for future use
         cookies_filepath = os.path.join(log_path, 'cookies.pkl')
@@ -47,73 +115,78 @@ def searchMAM(cfg, titleFilename, authors, extension):
             #assume a session ID is passed as a parameter
             sess.headers.update({"cookie": f"mam_id={session}"})
 
-        #test session and cookie
+        #test session and cookie (once per run: every request to MAM costs a throttle slot)
+        global _cookieTestedThisRun
         try:
-            r = sess.get('https://www.myanonamouse.net/jsonLoad.php', timeout=5)  # test cookie
-            if r.status_code != 200:
-                raise Exception(f'Error communicating with API. status code {r.status_code} {r.text}')
-            else:
+            if not _cookieTestedThisRun:
+                _throttle(cfg)
+                r = sess.get('https://www.myanonamouse.net/jsonLoad.php', timeout=5)  # test cookie
+                if r.status_code != 200:
+                    raise Exception(f'Error communicating with API. status code {r.status_code} {r.text}')
+                _cookieTestedThisRun = True
                 # save cookies for later
                 with open(cookies_filepath, 'wb') as f:
                     pickle.dump(sess.cookies, f)
                     print (f"Cookie updated...")
 
-                mam_categories = []
-                if audiobook:
-                    mam_categories.append(13) #audiobooks
-                    mam_categories.append(16) #radio
-                if ebook:
-                    mam_categories.append(14)
-                if not mam_categories:
-                    return None
-                
-                params = {
-                    "tor": {
-                        "text": search,  # The search string.
-                        "srchIn": {
-                            "title": "true",
-                            "author": "true",
-                            "fileTypes": "true",
-                            "filenames": "true"
-                        },
-                        "main_cat": mam_categories
-                    },
-                    "perpage":50
-                }
-
-                if (verbose):
-                    print(f'Search: {search}')
-
-                try:
-                    r = sess.post('https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php', json=params)
-                    if r.text == '{"error":"Nothing returned, out of 0"}':
-                        return None
-
-                    results = r.json()
-
-                    #cache this result before returning it
-                    if not results["data"] is None and len((results["data"])) > 0:
-                        cacheResults = False
-                        #parent calls filter to snatched for matching, so check that the result has at least one snatched
-                        for book in results["data"]:
-                            if not book['my_snatched'] is None and bool(book['my_snatched']):
-                                cacheResults = True
-
-                        if cacheResults:
-                            myx_utilities.cacheMe(cacheKey, "mam", results, cfg)
-
-                    return (results["data"])
+            mam_categories = []
+            if audiobook:
+                mam_categories.append(13) #audiobooks
+                mam_categories.append(16) #radio
+            if ebook:
+                mam_categories.append(14)
+            if not mam_categories:
+                return None
             
-                except Exception as e:
-                    print(f'error searching MAM {e}')
+            params = {
+                "tor": {
+                    "text": search,  # The search string.
+                    "srchIn": {
+                        "title": "true",
+                        "author": "true",
+                        "fileTypes": "true",
+                        "filenames": "true"
+                    },
+                    "main_cat": mam_categories
+                },
+                "perpage":50
+            }
+
+            if (verbose):
+                print(f'Search: {search}')
+
+            try:
+                _throttle(cfg)
+                _mamQueriesThisRun += 1
+                r = sess.post('https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php', json=params, timeout=20)
+                if r.text == '{"error":"Nothing returned, out of 0"}':
+                    #an empty answer is a real answer: cache it under the short "empty" TTL (myx_cache)
+                    myx_utilities.cacheMe(cacheKey, "mam", {"data": [], "total": 0, "found": 0, "perpage": 50, "start": 0}, cfg)
+                    myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search)
+                    return None
+                if r.status_code != 200:
+                    raise Exception(f'search failed with status {r.status_code}')
+
+                results = r.json()
+                data = results.get("data") if isinstance(results, dict) else None
+                if data is None:
+                    raise Exception(f'unexpected MAM answer: {str(results)[:120]}')
+
+                #cache every successful answer; myx_cache gives answers without a snatched entry the short TTL
+                myx_utilities.cacheMe(cacheKey, "mam", results, cfg)
+                myx_jsonlog.noteQuery("mam", cacheKey, False, len(data), text=search)
+                return data
+            
+            except Exception as e:
+                print(f'error searching MAM {e}')
         except Exception as e:
             print(f'error searching MAM {e}')
             
     return None
 
-def getMAMBook(cfg, titleFilename="", authors="", extension=""):
+def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
     books=[]
-    mamBook=searchMAM(cfg, titleFilename, authors, extension)
+    mamBook=searchMAM(cfg, titleFilename, authors, extension, refresh=refresh)
     if (mamBook is not None):
         for b in mamBook:
             #pprint(b)
@@ -154,13 +227,14 @@ def getMAMBook(cfg, titleFilename="", authors="", extension=""):
 
     return books
 
-def testSessionCookie(mySession):
+def testSessionCookie(mySession, cfg=None):
     isSessionCookieValid = False
 
     #test session and cookie
     #print (f"Cookie: {mySession}")
     try:
         #Hit cookieCheck API, https://www.myanonamouse.net/json/checkCookie.php
+        _throttle(cfg) if cfg is not None else None
         r = mySession.get('https://www.myanonamouse.net/json/checkCookie.php', timeout=5)  # test cookie    
 
         if r.status_code != 200:
@@ -190,7 +264,7 @@ def checkMAMCookie(cfg):
         #If it does, create a session, using this cookie
         cookies = pickle.load(open(cookies_filepath, 'rb'))
         sess.cookies = cookies
-        isCookieValid = testSessionCookie (sess)
+        isCookieValid = testSessionCookie (sess, cfg)
 
         #if the session cookie is NOT Valid
         if (not isCookieValid):
@@ -207,7 +281,7 @@ def checkMAMCookie(cfg):
     if (useConfigSession):
         if (session is not None) and len(session):
             sess.headers.update({"cookie": f"mam_id={session}"})
-            isCookieValid = testSessionCookie (sess)
+            isCookieValid = testSessionCookie (sess, cfg)
 
         else:
             print (f"No session ID found in the config... Please go to MAM Preferences > Security to create a new session")

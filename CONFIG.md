@@ -56,6 +56,14 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
 | flags/parse_names | | Parse the release folder/file name (`Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`, `(Unabridged)` noise) and use it for the search where the id3 tags are empty or junk (`AudioTrack 01`, `unknown artist`, or a title that just repeats the file name). `--legacy-names` turns it off. | 1 |
 | pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
+| cache/audible_positive_hours | | How long a non-empty Audible answer is reused | 720 |
+| cache/audible_empty_hours | | How long an empty Audible answer (or a per-ASIN answer without a title) is reused before the query is retried | 6 |
+| cache/mam_positive_hours | | How long a MAM answer with a snatched entry is reused | 168 |
+| cache/mam_empty_hours | | How long an empty MAM answer (or one without a snatched entry) is reused | 24 |
+| mam/min_interval_seconds | | Minimum spacing between HTTP requests to MAM (cache hits are free) | 6 |
+| mam/max_queries_per_run | | Maximum MAM searches per run; further searches are skipped with a message (0 = unlimited) | 60 |
+| json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
+| refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
 | paths       |         | This is a *list* of folders and files to be processed              |
 | | files               | File patterns to be searched | ["\*\*/\*.m4b", "\*\*/\*.mp3", "\*\*/\*.m4a"]    |
 | | source_path         | Unorganized folder location | /path/to/downloads   |
@@ -140,3 +148,54 @@ match the next one runs, bounded and cached like any other query: the swapped re
 `Author - Title` are equally plausible, then the title alone (pen names, translators), and finally the search
 exactly as upstream performed it with the file's own tags, so a wrong parse can add a match but never lose one.
 The MAM ranking uses the same parsed values; the MAM query string is unchanged.
+
+
+## Caching, MAM traffic, `--refresh`
+
+Search answers are cached under `cache_path/__cache__/{audible,mam}/<sha256 of the query>` in the API's own JSON
+(same files and names as upstream; tools that read them keep working). Upstream kept every Audible answer forever,
+so one transient or malformed query became a permanent miss, and never cached empty MAM answers, so every
+unmatched release queried MAM again on every run. Entries now expire by age and kind (`cache/*_hours` above);
+errors and HTTP failures are never cached; an Audible per-ASIN answer without a title and a MAM answer without a
+snatched entry count as empty. Every HTTP request to MAM is spaced `mam/min_interval_seconds` apart and a run
+performs at most `mam/max_queries_per_run` searches.
+
+Note for existing installations: cache entries older than their TTL are retried the next time a release that
+uses them is processed. Releases already matched and hardlinked are never re-searched (their processed marker does
+not expire), so the first run after upgrading re-queries only the releases that are still unmatched, within the
+per-run MAM budget and spacing, and afterwards once per TTL.
+
+`--refresh RELEASE` (repeatable; or `"refresh": true` in a hint) re-processes one release: its cached answers and
+its "already processed" marker are ignored while everything else is served from cache. `--no-cache` still does this
+for the whole run.
+
+## JSON run log (`--json-log [PATH]`)
+
+In addition to the CSV, one JSON object per line: a `book` record per processed release and a final `run` record.
+The CSV columns, file name and stdout are unchanged; the JSON log is the structured replacement for scraping them.
+
+~~~
+{"type": "book", "schema_version": 1, "run": "20260915031500", "release": "Megan Fate Marshman - Relaxed.m4b",
+ "release_path": "/data/downloads/complete/audio", "files": [{"path": "...", "duration_s": 14670.2, "hardlinked": true}],
+ "id3": {"asin": "", "title": "", "authors": [], "narrators": [], "duration_s": 14670.2},
+ "parsed_name": {"title": "Relaxed", "authors": ["Megan Fate Marshman"], "series": "", "part": "", "asin": ""},
+ "hint": null, "pinned_asin": "", "matched": true, "metadata_source": "audible",
+ "match": {"asin": "B0C5Q9XJ1K", "title": "Relaxed", "authors": ["Megan Fate Marshman"], "narrators": ["..."],
+           "series": "", "part": "", "runtime_min": 244, "match_rate": 100, "attempt": "parsed"},
+ "expected_duration_min": 244.0, "runtime_delta_min": 0.0, "target_path": "/data/Audiobooks/Megan Fate Marshman/Relaxed",
+ "hardlinked": true, "mam_count": 1, "audible_count": 1,
+ "queries": [{"kind": "mam", "cache_key": "<sha256>", "cached": false, "expired": false, "results": 1, "text": "..."},
+             {"kind": "audible", "cache_key": "<sha256>", "cached": false, "expired": false, "results": 1,
+              "asin": "", "title": "Relaxed", "authors": "\"Megan Fate Marshman\"", "keywords": "relaxed megan fate marshman"}]}
+{"type": "run", "schema_version": 1, "run": "20260915031500", "started_utc": "...", "finished_utc": "...",
+ "metadata": "mam-audible", "books": 3, "matched": 2, "unmatched": 1, "hardlinked_files": 4,
+ "mam_queries": 2, "audible_queries": 3, "csv": "/logs/booktree_log_20260915031500.csv", "exit_code": 0}
+~~~
+
+`match.attempt` says what produced the match: `pinned`, `candidates`, `parsed`, `parsed-authors`, `swapped`,
+`title-only`, `legacy` (upstream's own search), `mam`, or `log` (taken from the input log in `log` mode).
+`queries[].cache_key` is the hash printed in `Checking cache: <kind>/<hash>`; a query that failed carries `error`,
+one skipped by the MAM budget carries `skipped`. `id3.duration_s` is the first file's duration while
+`expected_duration_min` is the whole release. One `run` record is written per `paths` entry. Give the path as
+`--json-log=PATH`, or put `--json-log PATH` after the config file (argparse would otherwise take the config file
+as the path).

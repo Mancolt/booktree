@@ -70,6 +70,7 @@ class _OfflineSession:
 
 myx_mam.requests = SimpleNamespace(Session=_OfflineSession)   # searchMAM builds requests.Session()
 AUDIBLE_CLIENT = OfflineClient()
+HONOR_TTL = False
 
 
 # ---------------------------------------------------------------- helpers
@@ -80,6 +81,11 @@ def load_cfg(path, cache_path, log_path):
     cfg._data["Config"]["cache_path"] = cache_path
     cfg._data["Config"]["log_path"] = log_path
     cfg._data["Config"]["session"] = ""            # never needed offline; never log it
+    if not HONOR_TTL:
+        #the staged cache is a snapshot: replays compare code, not wall-clock expiry, MAM pacing or budgets
+        cfg._data["Config"]["cache"] = {k: 10**9 for k in ("audible_positive_hours", "audible_empty_hours",
+                                                          "mam_positive_hours", "mam_empty_hours")}
+        cfg._data["Config"]["mam"] = {"min_interval_seconds": 0, "max_queries_per_run": 0}
     return cfg
 
 
@@ -280,7 +286,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--audible-live", action="store_true", help="fetch uncached Audible queries from the real API (MAM stays offline)")
+    ap.add_argument("--honor-ttl", action="store_true", help="honour Config/cache TTLs and Config/mam pacing/budget (default: off, to compare code only)")
     a = ap.parse_args()
+    global HONOR_TTL
+    HONOR_TTL = a.honor_ttl
     global AUDIBLE_CLIENT
     AUDIBLE_CLIENT = LiveAudibleClient() if a.audible_live else OfflineClient()
 
@@ -305,6 +314,7 @@ def main():
         for lp in logs:
             run = os.path.basename(lp)[len("booktree_log_"):-4]
             books = group_run(lp)
+            myx_mam.resetRunCounters()
             summary["runs"] += 1
             for mb in books:
                 rec = replay_book(mb, cfgs, out_dirs, run)

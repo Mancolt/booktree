@@ -1,6 +1,6 @@
 from pathlib import Path
 from pprint import pprint
-from datetime import datetime
+from datetime import datetime, timezone
 from time import mktime
 from glob import iglob, glob
 import os, sys, subprocess, shlex, re
@@ -10,6 +10,7 @@ import myx_utilities
 import myx_mam
 import myx_args
 import myx_hints
+import myx_jsonlog
 import csv
 import httpx
 
@@ -88,9 +89,11 @@ def buildTreeFromLog(files, logfile, cfg):
         for b in book.keys():
             #try and match again, the assumption, is that the log has the right information
             #TODO: Check if the file has been processed before, if so skip
-            if ((no_cache) or (not book[b].isCached("book", cfg))):
+            book[b].applyHints(cfg)
+            if ((no_cache) or book[b].refresh or (not book[b].isCached("book", cfg))):
                 #file hasn't been processed, but do we need to do a metadata lookup?
                 allFiles.append(book[b])
+                myx_jsonlog.begin(book[b])
                 if (book[b].isMatched):
                     print(f"Processing: {book[b].name}... already matched!")
                     #already matched, don't redo the search/matching
@@ -100,7 +103,6 @@ def buildTreeFromLog(files, logfile, cfg):
 
                     #Search MAM record
                     bf = book[b].files[0]
-                    book[b].applyHints(cfg)
                     
                     #Search Audible using the provided id3 metadata in the input file
                     if (not ebooks):
@@ -135,6 +137,7 @@ def buildTreeFromLog(files, logfile, cfg):
         #Logging processed files
         print (f"\nLogging {len(allFiles)} processed books")
         myx_utilities.logBooks(logfile, allFiles, cfg)      
+        writeJsonLog(cfg, logfile, allFiles, matchedFiles)
 
         print(f"\nCompleted processing {len(allFiles)} books. {len(matchedFiles)}/{len(unmatchedFiles)} match/unmatch ratio.", end=" ")                 
         print("\n\n")    
@@ -252,14 +255,15 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     for b in book.keys():    
         #if this book has not been processed before AND it is not a multibook collection
         #print (f"Book: {b} isCached: {book[b].isCached('book')}")
-        if ((no_cache) or (not book[b].isCached("book", cfg))):
+        #hints are looked up now that every file of the release is known (a hint may be keyed by any file path)
+        book[b].applyHints(cfg)
+        if ((no_cache) or book[b].refresh or (not book[b].isCached("book", cfg))):
             #process the book
             print(f"Processing: {book[b].name}...")
             normalBooks.append(book[b])            
+            myx_jsonlog.begin(book[b])
             #Process these books the same way, essentially based on the first book in the file list
             bf = book[b].files[0]
-            #hints are looked up now that every file of the release is known (a hint may be keyed by any file path)
-            book[b].applyHints(cfg)
 
             #get MAM first, check if it's a foreign book
             isForeignBook = False
@@ -340,12 +344,44 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     #Logging processed files
     print (f"\nLogging {len(normalBooks)} processed books")
     myx_utilities.logBooks(logfile, normalBooks, cfg)  
+    writeJsonLog(cfg, logfile, normalBooks, matchedFiles)
 
     print(f"Completed processing {len(normalBooks)} books. {len(matchedFiles)}/{len(normalBooks) - len(matchedFiles)} match/unmatch ratio.")
     myx_utilities.printDivider()
 
 
     return
+
+
+RUN_STARTED = datetime.now(timezone.utc)
+
+
+def jsonLogPath(cfg, logfile):
+    """Where --json-log writes: an explicit path, or booktree_log_<timestamp>.jsonl next to the CSV."""
+    setting = cfg.get("Config/json_log")
+    if not setting:
+        return None
+    if isinstance(setting, str) and setting not in ("1", "true", "True"):
+        return setting
+    return os.path.splitext(logfile)[0] + ".jsonl"
+
+
+def writeJsonLog(cfg, logfile, books, matched):
+    """Additive: the JSON log must never change the outcome of a run, so any failure here is reported, not raised."""
+    myx_jsonlog.end()
+    myx_hints.warnUnusedRefresh(cfg)
+    path = jsonLogPath(cfg, logfile)
+    if not path:
+        return
+    try:
+        run_id = os.path.splitext(os.path.basename(logfile))[0].replace("booktree_log_", "")
+        records = [myx_jsonlog.record(b, cfg, run_id) for b in books]
+        hardlinked = sum(1 for b in books for f in b.files if f.isHardlinked)
+        records.append(myx_jsonlog.runRecord(run_id, RUN_STARTED, cfg, books, len(matched), hardlinked, logfile))
+        myx_jsonlog.write(path, records)
+        print(f"JSON log written to {path}")
+    except Exception as e:
+        print(f"JSON log could not be written to {path}: {e}")
 
 
 def main(cfg):

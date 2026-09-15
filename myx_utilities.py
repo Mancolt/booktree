@@ -8,9 +8,12 @@ import mimetypes
 import csv
 import json
 import hashlib
+import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 from langcodes import *
 import myx_classes
+import myx_cache
+import myx_jsonlog
 
 ##ffprobe
 def probe_file(filename):
@@ -191,10 +194,16 @@ def logBookRecords(logFilePath, bookFiles, cfg):
         except csv.Error as e:
             print(f"file {logFilePath}: {e}")
 
+def openLogForAppend(path):
+    """Append handle that does not follow a symlink planted at the log path (same protection as the JSON log)."""
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags, 0o644), mode="a", newline="", errors='ignore', encoding='utf-8')
+
+
 def logBooks(logFilePath, books, cfg):
     if len(books):
         write_headers = not os.path.exists(logFilePath)
-        with open(logFilePath, mode="a", newline="", errors='ignore', encoding='utf-8') as csv_file:
+        with openLogForAppend(logFilePath) as csv_file:
             try:
                 fields=getLogHeaders()
                 #pprint (fields)
@@ -370,7 +379,9 @@ def getHash(key):
     #surrogateescape: a file name that is not valid UTF-8 (os.listdir keeps the raw bytes as surrogates) must not abort the run
     return hashlib.sha256(str(key).encode(encoding="utf-8", errors="surrogateescape")).hexdigest()
 
-def isCached(key, category, cfg):
+def isCached(key, category, cfg, refresh=False):
+    """Is there a usable cache entry? Search caches (audible, mam) also have to be fresh (myx_cache TTLs);
+    refresh=True bypasses the cache for this lookup (--refresh / hint "refresh")."""
     #Config
     verbose = bool(cfg.get("Config/flags/verbose"))
     no_cache = bool(cfg.get("Config/flags/no_cache"))
@@ -380,29 +391,48 @@ def isCached(key, category, cfg):
     
     #Check if this book's hashkey exists in the cache, if so - it's been processed
     bookFile = os.path.join(getCachePath(cfg), "__cache__", category, key)
-    found = (not no_cache) and os.path.exists(bookFile)  
-    return found      
+    if no_cache or refresh:
+        return False
+    if not os.path.exists(bookFile):
+        return False
+    state, age, empty, ttl = myx_cache.entryState(bookFile, category, cfg)
+    if state == "expired":
+        print(f"Cache entry expired: {category}/{key} ({age:.0f}h old, {'empty' if empty else 'positive'} result, ttl {ttl:.0f}h)")
+        return False
+    return True
     
 def cacheMe(key, category, content, cfg):
     #Config
     verbose = bool(cfg.get("Config/flags/verbose"))
 
-    #create the cache file
+    #create the cache file (unique temp name, then rename: a concurrent reader never sees a torn file and two
+    #containers sharing the cache volume cannot collide on the temp name)
     bookFile = os.path.join(getCachePath(cfg), "__cache__", category, key)
-    with open(bookFile, mode="w", encoding='utf-8', errors='ignore') as file:
-        file.write(json.dumps(content))
+    fd, tmpFile = tempfile.mkstemp(dir=os.path.dirname(bookFile), prefix=f"{key}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, mode="w", encoding='utf-8', errors='ignore') as file:
+            file.write(json.dumps(content))
+        os.replace(tmpFile, bookFile)
+    except BaseException:
+        try:
+            os.unlink(tmpFile)
+        except OSError:
+            pass
+        raise
 
     if verbose:
         print(f"Caching {key} in File: {bookFile}")
     return os.path.exists(bookFile)        
 
 def loadFromCache(key, category, cfg):
-    #return the content from the cache file
+    #return the content from the cache file; None when it cannot be read or parsed (callers treat that as a miss)
     bookFile = os.path.join(getCachePath(cfg), "__cache__", category, key)
-    with open(bookFile, mode='r', encoding='utf-8') as file:
-        f = file.read()
-    
-    return json.loads(f)
+    try:
+        with open(bookFile, mode='r', encoding='utf-8') as file:
+            f = file.read()
+        return json.loads(f)
+    except (OSError, ValueError):
+        return None
     
 def isMultiCD(parent):
     return re.search(r"disc\s?\d+", parent.lower()) or re.search(r"cd\s?\d+", parent.lower())
