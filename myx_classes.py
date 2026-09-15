@@ -642,7 +642,7 @@ class MAMBook:
     def _rankAudible(self, books, book, keys, cfg, hintCandidates=False, requireTitle=False, runtimeAlone=False):
         """Upstream's interactive / best-match selection over Audible products. Sets audibleMatches and
         bestAudibleMatch. requireTitle: a result must match the title (an author match alone is not enough),
-        used when the title came from the parsed release name rather than from tags."""
+        used when the title or authors came from the parsed release name rather than from tags."""
         minMatchRate = int(cfg.get("Config/matchrate"))
         verbose = bool(cfg.get("Config/flags/verbose"))
         add_narrators = bool(cfg.get("Config/flags/add_narrators"))
@@ -755,7 +755,10 @@ class MAMBook:
             parsedBook, parsedApplied = self.applyParsedName(book, cfg)
         if parsedApplied:
             pAsin = parsedBook.asin if ("asin" in parsedApplied and not searchAsin) else searchAsin
-            requireTitle = "title" in parsedApplied
+            # title OR authors from the release name: the author-only gate would accept that
+            # author's other books (a leftover "James Patterson - The Guest" folder with a usable
+            # id3 title "The Guest" used to file Patterson's Along Came a Spider)
+            requireTitle = "title" in parsedApplied or "authors" in parsedApplied
             attempts.append(("parsed", parsedBook, pAsin, requireTitle))
             parsedAuthors = (self.parsedName or {}).get("authors") or []
             if parsedAuthors and "authors" not in parsedApplied and not pAsin and not myx_names.authorsOverlap(
@@ -984,7 +987,9 @@ class MAMBook:
         extension = f'"{bookFile.getExtension()}"'
         #for RANKING (never for the MAM query string) use the parsed release name where the id3 tags are junk
         rankBook, parsedApplied = self.applyParsedName(self.ffprobeBook, cfg) if (self.ffprobeBook is not None and not interactive) else (None, [])
-        rankTitle = rankBook.title if "title" in parsedApplied else title
+        # when the parse supplied title or authors, the title gate must see the search title
+        # (id3 or parsed), not the file basename — otherwise `file.m4b` rejects a correct MAM hit
+        rankTitle = rankBook.title if ("title" in parsedApplied or "authors" in parsedApplied) else title
     
         # Search using book key and authors (using or search in case the metadata is bad)
         print(f"Searching MAM for\n\tTitleFilename: {title}\n\tauthors:{authors}")
@@ -1045,7 +1050,7 @@ class MAMBook:
                             #otherwise, if maybe this title is close enough
                             #print (f"{abook.title} by {abook.authors}...")
                             authorOK = bool(len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg))
-                            if authorOK and "title" not in parsedApplied:
+                            if authorOK and "title" not in parsedApplied and "authors" not in parsedApplied:
                                 mamBook = '|'.join([abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
                                 if add_narrators:
                                     mamBook = '|'.join([mamBook, abook.getNarrators()])

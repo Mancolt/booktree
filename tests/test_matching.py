@@ -4,6 +4,7 @@ import contextlib
 import io
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import myx_classes
 import myx_hints
@@ -421,6 +422,65 @@ class ParsedNameSafetyTest(unittest.TestCase):
         self.assertEqual(best.asin, "B0RIGHT000")
         self.assertEqual(best.title, "Takedown")
         self.assertTrue(all(u.endswith("/catalog/products") for u, _ in client.calls), client.calls)
+
+    def test_parsed_authors_with_usable_title_reject_a_different_book_by_that_author(self):
+        # usable id3 title, junk artist, folder names the wrong author. requireTitle used to be
+        # False when only authors were replaced, so the author-only gate filed Patterson's
+        # Along Came a Spider as The Guest (token_sort 71 >= matchrate 60).
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0WRONG001", "Along Came a Spider", ["James Patterson"], 400)])
+            mb = mambook("James Patterson - The Guest", id3_book("The Guest", ["unknown artist"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertIn("This book doesn't have a matching title or author", out)
+        self.assertIn("Using parsed release name for authors", out)
+
+    def test_parsed_authors_with_usable_title_still_accept_the_matching_title(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0RIGHT000", "Takedown", ["Brad Thor"], 400)])
+            mb = mambook("Brad Thor - Takedown", id3_book("Takedown", ["unknown artist"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RIGHT000")
+        self.assertEqual(best.title, "Takedown")
+        self.assertIn("Using parsed release name for authors", out)
+
+
+def _mam_book(title, authors, snatched=True):
+    b = myx_classes.Book(title=title)
+    b.authors = [myx_classes.Contributor(a) for a in authors]
+    b.snatched = snatched
+    return b
+
+
+class ParsedAuthorsMamRankingTest(unittest.TestCase):
+    """MAM ranking must use the id3 title (not file.m4b) when only authors were parsed."""
+
+    def _run(self, name, id3, hits):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/flags/verbose": 1})
+            mb = mambook(name, id3)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), patch("myx_mam.getMAMBook", return_value=hits):
+                best = mb.getMAMBooks(cfg, mb.files[0])
+        return best, out.getvalue()
+
+    def test_correct_mam_hit_is_accepted_against_the_id3_title_not_the_basename(self):
+        # mambook files are named file.m4b; ranking against that basename would reject The Guest
+        best, out = self._run("James Patterson - The Guest",
+                              id3_book("The Guest", ["unknown artist"], 400 * 60),
+                              [_mam_book("The Guest", ["James Patterson"])])
+        self.assertIsNotNone(best)
+        self.assertEqual(best.title, "The Guest")
+        self.assertIn("Using parsed release name for authors", out)
+
+    def test_different_mam_title_by_the_parsed_author_is_rejected(self):
+        best, out = self._run("James Patterson - The Guest",
+                              id3_book("The Guest", ["unknown artist"], 400 * 60),
+                              [_mam_book("Along Came a Spider", ["James Patterson"])])
+        self.assertIsNone(best)
+        self.assertIn("This book doesn't have a matching title or author", out)
 
 
 class NarratorInArtistTagTest(unittest.TestCase):
