@@ -38,6 +38,12 @@ point is tag `upstream-baseline`.
   gate (`requireTitle` is only set when the parsed title replaced a junk tag), so a leftover or wrong
   ASIN in the folder name (`Brad Thor - Takedown [B0WRONG001]`) filed the book under a different title
   by the same author.
+- A usable id3 title is no longer paired with a parsed folder author under the author-only
+  gate. `requireTitle` was set only when the parsed title replaced a junk tag, so junk
+  artist + `Author - Title` in the folder name accepted that author's other books
+  (`James Patterson - The Guest` with id3 title `The Guest` filed Along Came a Spider).
+  The same title gate is applied to MAM ranking, comparing against the id3/parsed
+  title rather than the file basename.
 - In `log` mode an explicit `id3-asin` (fix.csv) is authoritative: the Audible product for that ASIN is accepted
   even when the id3 title/author disagree, instead of being vetoed by the title/author comparison.
 - Audible answers some per-ASIN lookups with a skeleton `{asin, asset_details, is_vvab}` and no title. These are
