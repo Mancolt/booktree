@@ -9,7 +9,8 @@ point is tag `upstream-baseline`.
 - Cache freshness (`cache/*_hours`): empty Audible answers (and title-less per-ASIN skeletons) are retried after
   6 hours, non-empty ones after 30 days; MAM answers after 24 hours / 7 days. Errors are never cached. Same
   cache files and names as upstream. Retires the weekly prune script.
-- MAM traffic rules: requests spaced 6 s apart, at most 60 searches per run (`mam/*`). Empty MAM answers are now
+- MAM traffic rules: requests spaced 6 s apart (the safety net); a per-run cap of 3000 searches as a runaway
+  guard (`mam/*`). Empty MAM answers are now
   cached for 24 h instead of being re-asked on every run.
 - `--refresh RELEASE` (or `"refresh": true` in a hint): re-process one release ignoring its cached answers and
   processed marker.

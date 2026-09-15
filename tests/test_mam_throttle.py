@@ -78,6 +78,7 @@ class MamThrottleTest(unittest.TestCase):
         for bad in (-50, float("inf"), "1e12"):
             self.assertEqual(myx_mam._knob(FakeConfig(td, **{"Config/mam/min_interval_seconds": bad}), "min_interval_seconds", 6.0, 0.0, 3600.0, float), 6.0)
         self.assertEqual(myx_mam._knob(FakeConfig(td, **{"Config/mam/max_queries_per_run": "60.0"}), "max_queries_per_run", 60, 0, 100000, int), 60)
+        self.assertEqual(myx_mam.DEFAULT_BUDGET, 3000)
 
     def test_malformed_cache_entry_is_searched_again(self):
         import os

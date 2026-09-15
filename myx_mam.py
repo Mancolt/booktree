@@ -10,8 +10,9 @@ import myx_jsonlog
 
 
 #MAM traffic rules: MAM sessions are IP/ASN-locked and rate-sensitive, so every HTTP request to MAM is spaced
-#(Config/mam/min_interval_seconds, default 6) and the number of searches per run is bounded
-#(Config/mam/max_queries_per_run, default 60). Cache hits cost nothing.
+#(Config/mam/min_interval_seconds, default 6). The spacing is the safety net: 400 searches 6 s apart were fine in
+#practice. The per-run search cap (Config/mam/max_queries_per_run, default 3000) is only a guard against a
+#runaway process; a library that large simply needs a second run. Cache hits cost nothing.
 _lastMamRequest = 0.0
 _mamQueriesThisRun = 0
 _cookieTestedThisRun = False
@@ -19,7 +20,7 @@ _warnedKnobs = set()
 _sleep = time.sleep
 _now = time.time
 DEFAULT_INTERVAL = 6.0
-DEFAULT_BUDGET = 60
+DEFAULT_BUDGET = 3000
 
 
 def _knob(cfg, key, default, lo, hi, cast):

@@ -61,7 +61,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | cache/mam_positive_hours | | How long a MAM answer with a snatched entry is reused | 168 |
 | cache/mam_empty_hours | | How long an empty MAM answer (or one without a snatched entry) is reused | 24 |
 | mam/min_interval_seconds | | Minimum spacing between HTTP requests to MAM (cache hits are free) | 6 |
-| mam/max_queries_per_run | | Maximum MAM searches per run; further searches are skipped with a message (0 = unlimited) | 60 |
+| mam/max_queries_per_run | | Runaway guard: maximum MAM searches in one run (one container invocation); further searches are skipped with a message and those releases stay unmatched until the next run (0 = unlimited). The 6-second spacing is the real safety net; this only stops a loop | 3000 |
 | json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
 | refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
 | paths       |         | This is a *list* of folders and files to be processed              |
@@ -157,13 +157,15 @@ Search answers are cached under `cache_path/__cache__/{audible,mam}/<sha256 of t
 so one transient or malformed query became a permanent miss, and never cached empty MAM answers, so every
 unmatched release queried MAM again on every run. Entries now expire by age and kind (`cache/*_hours` above);
 errors and HTTP failures are never cached; an Audible per-ASIN answer without a title and a MAM answer without a
-snatched entry count as empty. Every HTTP request to MAM is spaced `mam/min_interval_seconds` apart and a run
-performs at most `mam/max_queries_per_run` searches.
+snatched entry count as empty. Every HTTP request to MAM is spaced `mam/min_interval_seconds` apart, which is the
+protection that matters; `mam/max_queries_per_run` (3000) exists only to stop a runaway process. An unmatched
+release costs two searches (the initial one and the widened retry), so 3000 covers a first run over about 1,500
+unmatched releases.
 
 Note for existing installations: cache entries older than their TTL are retried the next time a release that
 uses them is processed. Releases already matched and hardlinked are never re-searched (their processed marker does
-not expire), so the first run after upgrading re-queries only the releases that are still unmatched, within the
-per-run MAM budget and spacing, and afterwards once per TTL.
+not expire), so the first run after upgrading re-queries only the releases that are still unmatched, 6 seconds
+apart, and afterwards once per TTL.
 
 `--refresh RELEASE` (repeatable; or `"refresh": true` in a hint) re-processes one release: its cached answers and
 its "already processed" marker are ignored while everything else is served from cache. `--no-cache` still does this
