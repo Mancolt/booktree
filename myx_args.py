@@ -21,6 +21,8 @@ def importArgs():
     parser.add_argument("--ebooks", default=None, action="store_true", help="If provided, will look for ebooks and skip audible")
     parser.add_argument("--add-narrators", default=None, action="store_true", help="If provided,include the narrators in the path")
     parser.add_argument("--legacy-names", default=None, action="store_true", help="Disable release-name parsing (Author - Title, Title [ASIN], ...) and search with the raw id3/file name as upstream did")
+    parser.add_argument("--refresh", action="append", default=None, metavar="RELEASE", help="Re-process this release (folder/file name or path) ignoring cached search results and the processed marker; repeatable")
+    parser.add_argument("--json-log", nargs="?", const=True, default=None, metavar="PATH", help="Also write a JSON-lines run log (default: next to the CSV as booktree_log_<timestamp>.jsonl). Give the path as --json-log=PATH or put the option after the config file")
     parser.add_argument("--hints", default=None, metavar="JSON", help="Per-release hints (pinned ASIN, candidate ASINs, expected duration, search title/authors) keyed by release folder, file name or path; see CONFIG.md")
 
     # #you want a specific file or pattern
@@ -103,6 +105,12 @@ class Config(object):
 
                 if getattr(params, "legacy_names", None):
                     cfg["Config"]["flags"]["parse_names"] = 0
+
+                if getattr(params, "refresh", None):
+                    cfg["Config"]["refresh"] = list(params.refresh)
+
+                if getattr(params, "json_log", None) is not None:
+                    cfg["Config"]["json_log"] = params.json_log
 
             self._data = cfg            
         except Exception as e:

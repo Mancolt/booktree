@@ -13,6 +13,7 @@ Keys are matched against the release as booktree names it (the folder under the 
 name for a loose file), the full path of the release folder, or the full path of any of its files.  Fields:
 
     asin          pinned ASIN: authoritative, the Audible product is accepted without a title/author check
+    refresh       true: ignore cached search results and the "already processed" marker for this release
     candidates    up to MAX_CANDIDATES ASINs to fetch by ASIN and rank by duration, then fuzzy score
     duration_min  expected runtime in minutes (overrides the sum of the files' durations)
     title         search title to use instead of the id3 title
@@ -85,6 +86,10 @@ def normalizeHint(raw, where="hint"):
         if len(raw["title"]) > MAX_TEXT_LEN:
             raise HintsError(f"{where}.title: longer than {MAX_TEXT_LEN} characters")
         hint["title"] = raw["title"].strip()
+    if raw.get("refresh") is not None:
+        if not isinstance(raw["refresh"], bool):
+            raise HintsError(f"{where}.refresh: must be true or false")
+        hint["refresh"] = raw["refresh"]
     if raw.get("authors"):
         a = raw["authors"]
         if isinstance(a, str):
@@ -119,16 +124,44 @@ def loadHintsFile(path):
 
 
 def getHints(cfg):
-    """Hints for this run ({} when none configured). Loaded once per file path."""
+    """Hints for this run ({} when none configured). Loaded once per file path. `--refresh NAME` entries
+    (Config/refresh, a list of release names or paths) become {"refresh": true} hints."""
     path = cfg.get("Config/hints_file")
-    if not path:
-        return {}
-    if path not in _cache:
-        if not os.path.exists(path):
-            raise HintsError(f"hints file not found: {path}")
-        _cache[path] = loadHintsFile(path)
-        print(f"Loaded {len(_cache[path])} hint(s) from {path}")
-    return _cache[path]
+    refresh = cfg.get("Config/refresh") or []
+    if isinstance(refresh, str):
+        refresh = [refresh]
+    refresh = [str(r) for r in refresh if str(r).strip()]
+    key = (path, tuple(refresh))
+    if key not in _cache:
+        hints = {}
+        if path:
+            if not os.path.exists(path):
+                raise HintsError(f"hints file not found: {path}")
+            hints = loadHintsFile(path)
+            print(f"Loaded {len(hints)} hint(s) from {path}")
+        for name in refresh:
+            k = os.path.normpath(name) if str(name).startswith("/") else str(name)
+            hints.setdefault(k, {})["refresh"] = True
+        _cache[key] = hints
+    return _cache[key]
+
+
+_appliedRefresh = set()
+
+
+def noteRefreshApplied(hintKey):
+    _appliedRefresh.add(hintKey)
+
+
+def warnUnusedRefresh(cfg):
+    """After a run: a --refresh name that matched no release is a typo the operator should hear about."""
+    refresh = cfg.get("Config/refresh") or []
+    if isinstance(refresh, str):
+        refresh = [refresh]
+    for name in refresh:
+        k = os.path.normpath(name) if str(name).startswith("/") else str(name)
+        if k not in _appliedRefresh:
+            print(f"Warning: --refresh {name!r} matched no release in this run")
 
 
 def findHint(hints, name, paths=(), root=None):
@@ -138,10 +171,10 @@ def findHint(hints, name, paths=(), root=None):
     if not hints:
         return None
     if name in hints:
-        return hints[name]
+        return _found(hints, name)
     for p in paths:
         if p in hints:
-            return hints[p]
+            return _found(hints, p)
     #ancestor walk only with a known, comparable source root: without one a hint keyed by a top-level folder
     #such as "/data" would apply to every release
     if not root:
@@ -153,12 +186,18 @@ def findHint(hints, name, paths=(), root=None):
         parent = os.path.dirname(os.path.normpath(p))
         while parent and parent not in ("/", ".", root):
             if parent in hints:
-                return hints[parent]
+                return _found(hints, parent)
             nxt = os.path.dirname(parent)
             if nxt == parent:
                 break
             parent = nxt
     return None
+
+
+def _found(hints, key):
+    if hints[key].get("refresh"):
+        noteRefreshApplied(key)
+    return hints[key]
 
 
 def durationDelta(expected_min, candidate_min):

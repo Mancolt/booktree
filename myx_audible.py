@@ -4,8 +4,9 @@ from pprint import pprint
 import json
 import myx_utilities
 import myx_classes
+import myx_jsonlog
 
-def getAudibleBook(client, cfg, asin="", title="", authors="", narrators="", keywords="", language="english"):
+def getAudibleBook(client, cfg, asin="", title="", authors="", narrators="", keywords="", language="english", refresh=False):
     print (f"Searching Audible for\n\tasin:{asin}\n\ttitle:{title}\n\tauthors:{authors}\n\tnarrators:{narrators}\n\tkeywords:{keywords}")
 
     # if metadata is libby, title is PartX, don't use it
@@ -16,13 +17,18 @@ def getAudibleBook(client, cfg, asin="", title="", authors="", narrators="", key
     enBooks=[]
     cacheKey = myx_utilities.getHash(f"{asin}{title}{authors}{narrators}{keywords}")
     books={}
-    if myx_utilities.isCached(cacheKey, "audible", cfg):
+    cached = False
+    if myx_utilities.isCached(cacheKey, "audible", cfg, refresh=refresh):
         print (f"Retrieving {cacheKey} from audible")
 
         #this search has been done before, retrieve the results
         books = myx_utilities.loadFromCache(cacheKey, "audible", cfg)
+        cached = isinstance(books, dict)
+        if not cached:
+            print(f"Ignoring malformed Audible cache entry {cacheKey}, searching again")
+            books = {}
 
-    else:
+    if not cached:
         try:
             if len(asin) : 
                 p=f"https://api.audible.com/1.0/catalog/products/{asin}"
@@ -52,8 +58,10 @@ def getAudibleBook(client, cfg, asin="", title="", authors="", narrators="", key
 
         except Exception as e:
                 print(f"Error searching audible: {e}")
+                myx_jsonlog.noteQuery("audible", cacheKey, False, 0, error=str(e)[:200], asin=asin, title=title,
+                                      authors=authors, narrators=narrators, keywords=keywords)
+                return enBooks
 
-    
     #check for ["product"] or ["products"]
     if "product" in books.keys():
         enBooks.append(books["product"])
@@ -64,6 +72,8 @@ def getAudibleBook(client, cfg, asin="", title="", authors="", narrators="", key
                 if ("language" in book) and (book["language"] == language):
                     enBooks.append(book)
 
+    myx_jsonlog.noteQuery("audible", cacheKey, cached, len(enBooks), asin=asin, title=title, authors=authors,
+                          narrators=narrators, keywords=keywords)
     return enBooks
 
 def getBookByAsin(client, asin):
