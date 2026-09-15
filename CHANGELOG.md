@@ -33,6 +33,11 @@ point is tag `upstream-baseline`.
 - `Config/pin_max_runtime_delta_min`: optional hard limit on the runtime mismatch of a pinned ASIN (default off).
 
 ### Fixed
+- A usable id3 title is no longer overridden by an ASIN parsed from the release name. `applyParsedName`
+  used to send that ASIN to Audible even when the tags were good, and `_rankAudible` skipped the title
+  gate (`requireTitle` is only set when the parsed title replaced a junk tag), so a leftover or wrong
+  ASIN in the folder name (`Brad Thor - Takedown [B0WRONG001]`) filed the book under a different title
+  by the same author.
 - In `log` mode an explicit `id3-asin` (fix.csv) is authoritative: the Audible product for that ASIN is accepted
   even when the id3 title/author disagree, instead of being vetoed by the title/author comparison.
 - Audible answers some per-ASIN lookups with a skeleton `{asin, asset_details, is_vvab}` and no title. These are

@@ -489,7 +489,10 @@ class MAMBook:
                 searchBook = copy.copy(searchBook)
             searchBook.authors = [Contributor(a) for a in parsed["authors"]]
             applied.append("authors")
-        if parsed["asin"] and not (book.asin or "").strip():
+        if parsed["asin"] and not (book.asin or "").strip() and myx_names.isJunkTitle(book.title, relName):
+            # filename ASINs are only for untagged/junk-title files. A usable id3 title must not be
+            # redirected by a leftover or wrong ASIN in the release name: requireTitle is False when
+            # title was not replaced, so a same-author different book would pass the author gate.
             if searchBook is book:
                 searchBook = copy.copy(searchBook)
             searchBook.asin = parsed["asin"]
