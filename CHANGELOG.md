@@ -6,6 +6,11 @@ point is tag `upstream-baseline`.
 ## Unreleased
 
 ### Added
+- Release-name parsing before the search (`flags/parse_names`, default on; `--legacy-names` restores the old
+  behaviour): `Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`,
+  `(Unabridged)` and format noise. Used only where the id3 tags are empty or junk; title and author are sent to
+  Audible as separate fields, with a swapped-reading retry for ambiguous names and a title-only retry. See CONFIG.md.
+- Image tags: every merge to `main` publishes `:edge`; `:latest` and version tags are published from `v*` tags only.
 - `--hints <json>` (or `Config/hints_file`): per-release pinned ASIN, candidate ASINs, expected duration and
   search title/authors, keyed by release folder, file name or path. See CONFIG.md.
 - Duration as evidence: among acceptable Audible results, one whose runtime is within 2 minutes of the files'
@@ -21,6 +26,9 @@ point is tag `upstream-baseline`.
 - A release whose files report no duration no longer raises in the runtime calculation.
 - Author and series names are escaped before being used as regular expressions when deriving an alternative
   title; a name such as `Brad [` (from a tag or a hint) used to abort the run, and a crafted one could hang it.
+- A malformed `AUDIBLE_ASIN` tag is ignored (with a message) instead of being sent to Audible's per-ASIN URL,
+  which guaranteed a miss.
+- A file name that is not valid UTF-8 no longer aborts the run when its cache key is computed.
 - `metadata.opf` is now well-formed XML for any metadata: `&`, `<`, `>` and quotes are escaped in every text node
   and attribute, CDATA sections survive a literal `]]>`, characters XML forbids are stripped, and a backslash in a
   description no longer aborts OPF generation. Audiobookshelf used to discard the whole file, ASIN included, on

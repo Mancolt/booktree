@@ -263,3 +263,253 @@ class ReviewFindingsTest(unittest.TestCase):
         self.assertIn("title:Relaxed", out)
         self.assertNotIn("Found alternative title", out)
         self.assertEqual(best.asin, "B0AAAAAAA1")
+
+
+class ParsedNameSearchTest(unittest.TestCase):
+    """Release-name parsing feeds the Audible search when the id3 tags are junk (roadmap item 3)."""
+
+    def test_junk_id3_searches_with_parsed_title_and_author_separately(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0RELAXED1", "Relaxed", ["Megan Fate Marshman"], 244)])
+            mb = mambook("Megan Fate Marshman - Relaxed.m4b", id3_book("", [], 244 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RELAXED1")
+        self.assertIn("Parsed release name 'Megan Fate Marshman - Relaxed.m4b': title:'Relaxed' authors:['Megan Fate Marshman']", out)
+        self.assertEqual(out.count("Using parsed release name"), 1)
+        self.assertIn("\ttitle:Relaxed\n", out)
+        self.assertIn('\tauthors:"Megan Fate Marshman"', out)
+        self.assertIn("\tkeywords:relaxed megan fate marshman", out)
+
+    def test_good_id3_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0GOOD0001", "The Coworker", ["Freida McFadden"], 492)])
+            mb = mambook("Some Odd Folder Name", id3_book("The Coworker", ["Freida McFadden"], 492 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0GOOD0001")
+        self.assertNotIn("Using parsed release name", out)
+        self.assertNotIn("Parsed release name", out)          # good-tag books keep upstream's output verbatim
+        self.assertIn("\ttitle:The Coworker\n", out)
+
+    def test_legacy_flag_restores_upstream_search_keys(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/flags/parse_names": 0})
+            client = FakeAudible(search=[])
+            mb = mambook("Megan Fate Marshman - Relaxed.m4b", id3_book("", [], 244 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertNotIn("Parsed release name", out)
+        self.assertIn("Found alternative title", out)           # upstream's getAltTitle path
+
+    def test_asin_in_brackets_is_used_for_the_lookup(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B09HY7C3BH": product("B09HY7C3BH", "Becoming Your Own Banker", ["R. Nelson Nash"], 236)})
+            mb = mambook("Becoming Your Own Banker [B09HY7C3BH]", id3_book("", [], 236 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B09HY7C3BH")
+        self.assertEqual(client.calls[0][0].rsplit("/", 1)[1], "B09HY7C3BH")
+
+    def test_ambiguous_name_retries_swapped(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+
+            class SwapAware(FakeAudible):
+                def get(self, url, params=None):
+                    self.calls.append((url, dict(params or {})))
+                    if params and params.get("author") == '"Sally Hepworth"':
+                        return type("R", (), {"raise_for_status": lambda s: None,
+                                              "json": lambda s: {"products": [product("B0MABEL000", "Mad Mabel", ["Sally Hepworth"], 600)]}})()
+                    return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"products": [], "total_results": 0}})()
+            client = SwapAware()
+            mb = mambook("Mad Mabel - Sally Hepworth.m4b", id3_book("", [], 600 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0MABEL000")
+        self.assertIn("retrying with the release name read the other way round", out)
+        self.assertLessEqual(len(client.calls), 3)
+
+    def test_title_only_fallback_when_author_constraint_finds_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+
+            class TitleOnly(FakeAudible):
+                def get(self, url, params=None):
+                    self.calls.append((url, dict(params or {})))
+                    if params and not params.get("author"):
+                        return type("R", (), {"raise_for_status": lambda s: None,
+                                              "json": lambda s: {"products": [product("B0PENNAME1", "The Forgotten Soldier", ["Guy Sajer"], 900)]}})()
+                    return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"products": [], "total_results": 0}})()
+            client = TitleOnly()
+            mb = mambook("Guy Sajer - The Forgotten Soldier.m4b", id3_book("", [], 900 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0PENNAME1")
+        self.assertIn("retrying the Audible search with the title only", out)
+        self.assertLessEqual(len(client.calls), 3)
+
+    def test_hint_title_takes_precedence_over_parsing(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0HINTED01", "Hinted Title", ["Hinted Author"], 100)])
+            mb = mambook("Wrong Author - Wrong Title.m4b", id3_book("", [], 100 * 60), hint={"title": "Hinted Title", "authors": ["Hinted Author"]})
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0HINTED01")
+        self.assertNotIn("Using parsed release name", out)
+
+
+class ParsedNameSafetyTest(unittest.TestCase):
+    """A parse can add matches but must never lose one upstream found, nor accept a same-author wrong title."""
+
+    def test_wrong_parse_falls_back_to_upstream_search_and_still_matches(self):
+        # "Always Looking Up" looks like a name; the subtitle becomes the title; upstream matched on the whole string
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B002V0KM3W", "Always Looking Up", ["Michael J Fox"], 272)])
+            mb = mambook("Always Looking Up - The Adventures of an Incurable Optimist.mp3", id3_book("", [], 272 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B002V0KM3W")
+        self.assertIn("No match; retrying with the file's own tags as before", out)
+        self.assertIn("Found alternative title", out)
+
+    def test_parsed_title_rejects_a_different_book_by_the_same_author(self):
+        # the disc-folder case: release "Brad Thor - Takedown", Audible offers another Brad Thor title
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0WRONG001", "The First Commandment", ["Brad Thor"], 330)])
+            mb = mambook("Brad Thor - Takedown Unabridged - Complete", id3_book("AudioTrack 02", ["unknown artist"], 60 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertIn("This book doesn't have a matching title or author", out)
+
+    def test_good_tags_take_exactly_one_upstream_attempt(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[])
+            mb = mambook("Odd Folder", id3_book("The Coworker", ["Freida McFadden"], 492 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertEqual(len(client.calls), 1)
+        self.assertNotIn("No match; retrying", out)
+
+
+class NarratorInArtistTagTest(unittest.TestCase):
+    def secrets(self):
+        return [product("B0BYRNE000", "The Secret", ["Rhonda Byrne"], 264),
+                product("B0REACHER0", "The Secret", ["Lee Child", "Andrew Child"], 554)]
+
+    def test_release_authors_are_tried_when_the_tag_names_someone_else(self):
+        # the artist tag holds the narrator; the release name has the real authors
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+
+            class ByAuthor(FakeAudible):
+                def get(self, url, params=None):
+                    self.calls.append((url, dict(params or {})))
+                    hits = [p for p in self.search if params.get("author", "") and any(a["name"].split()[-1] in params["author"] for a in p["authors"])]
+                    return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"products": hits, "total_results": len(hits)}})()
+            client = ByAuthor(search=self.secrets())
+            mb = mambook("Lee Child, Andrew Child - Jack Reacher 28 - The Secret, Scott Brick narrator m4b",
+                         id3_book("", ["Scott Brick"], 555 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0REACHER0")
+        self.assertIn("retrying with the authors from the release name: ['Lee Child', 'Andrew Child']", out)
+
+    def test_title_only_attempt_accepts_the_runtime_match_over_a_higher_score(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+
+            class TitleOnlyReturns(FakeAudible):
+                def get(self, url, params=None):
+                    self.calls.append((url, dict(params or {})))
+                    hits = self.search if not params.get("author") else []
+                    return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"products": hits, "total_results": len(hits)}})()
+            client = TitleOnlyReturns(search=self.secrets())
+            mb = mambook("Unknown Person - The Secret", id3_book("", ["Scott Brick"], 555 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0REACHER0")
+        self.assertTrue("Duration match preferred" in out or "Title-verified result accepted on duration" in out)
+        self.assertNotIn("Found alternative title", out)      # upstream's alt-title step only runs for the upstream attempt
+
+
+class ReviewRoundTwoTest(unittest.TestCase):
+    def test_unabridged_folder_with_good_tags_is_one_upstream_attempt_without_a_fake_asin(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0STORMS00", "Season of Storms", ["Andrzej Sapkowski"], 705)])
+            mb = mambook("Andrzej Sapkowski - Season of Storms (Unabridged)", id3_book("Season of Storms", ["Andrzej Sapkowski"], 705 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0STORMS00")
+        self.assertEqual(len(client.calls), 1)
+        self.assertTrue(client.calls[0][0].endswith("/catalog/products"))
+        self.assertNotIn("UNABRIDGED", out)
+        self.assertNotIn("Parsed release name", out)
+
+    def test_tag_title_equal_to_file_stem_with_good_authors_keeps_upstream_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0RELAXED1", "Relaxed", ["Megan Fate Marshman"], 244)])
+            mb = mambook("Relaxed.m4b", id3_book("Relaxed", ["Megan Fate Marshman"], 244 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RELAXED1")
+        self.assertNotIn("Using parsed release name", out)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_interactive_mode_runs_only_the_upstream_attempt(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/flags/interactive": 1})
+            client = FakeAudible(search=[product("B0BYRNE000", "The Secret", ["Rhonda Byrne"], 264)])
+            mb = mambook("Lee Child - The Secret", id3_book("", [], 555 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(len(client.calls), 1)
+        self.assertNotIn("Using parsed release name", out)
+        self.assertIn("Found alternative title", out)
+
+    def test_hint_candidates_with_empty_tag_title_still_derive_the_alt_title(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0AAAAAAA1": product("B0AAAAAAA1", "Takedown", ["Brad Thor"], 330)})
+            mb = mambook("Brad Thor - Takedown", id3_book("", [], 330 * 60), hint={"candidates": ["B0AAAAAAA1"]})
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0AAAAAAA1")
+        self.assertIn("Found alternative title", out)
+
+    def test_audible_match_count_reflects_the_attempt_that_matched(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+
+            class TitleOnly(FakeAudible):
+                def get(self, url, params=None):
+                    self.calls.append((url, dict(params or {})))
+                    hits = self.search if not params.get("author") else []
+                    return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"products": hits, "total_results": len(hits)}})()
+            client = TitleOnly(search=[product("B0PENNAME1", "The Forgotten Soldier", ["Guy Sajer"], 900),
+                                       product("B0OTHER000", "The Forgotten Soldiers", ["Someone Else"], 100)])
+            mb = mambook("Guy Sajer - The Forgotten Soldier.m4b", id3_book("", [], 900 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0PENNAME1")
+        self.assertEqual(len(mb.audibleMatches), 2)
+
+
+class MalformedAsinTagTest(unittest.TestCase):
+    def test_malformed_asin_tag_is_ignored_not_sent_to_audible(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0GOOD0001", "The Coworker", ["Freida McFadden"], 492)])
+            mb = mambook("x", id3_book("The Coworker", ["Freida McFadden"], 492 * 60, asin="../../etc/passwd"))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0GOOD0001")
+        self.assertIn("Ignoring malformed ASIN tag", out)
+        self.assertTrue(all(u.endswith("/catalog/products") for u, _ in client.calls))
+
+
+class DuplicateAttemptTest(unittest.TestCase):
+    def test_identical_queries_are_not_repeated(self):
+        # good tag title, empty artist tag, no ASIN: title-only and upstream would be the same query
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[])
+            mb = mambook("The Coworker - Freida McFadden.m4b", id3_book("The Coworker", [], 492 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        queries = [(c[1].get("title"), c[1].get("author")) for c in client.calls]
+        self.assertEqual(len(queries), len(set(queries)), queries)

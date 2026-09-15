@@ -367,7 +367,8 @@ def createOPF(book, path):
     return
 
 def getHash(key):
-    return hashlib.sha256(key.encode(encoding="utf-8")).hexdigest()
+    #surrogateescape: a file name that is not valid UTF-8 (os.listdir keeps the raw bytes as surrogates) must not abort the run
+    return hashlib.sha256(str(key).encode(encoding="utf-8", errors="surrogateescape")).hexdigest()
 
 def isCached(key, category, cfg):
     #Config

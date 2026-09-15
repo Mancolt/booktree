@@ -26,10 +26,11 @@ Scripts built on upstream booktree keep working:
 |---|---|---|
 | 1 | `metadata.opf` text is not XML-escaped; a publisher such as `Little, Brown & Company` makes Audiobookshelf discard the whole OPF, ASIN included. Fixed. | — |
 | 2 | With an explicit ASIN in log mode the id3 title/author still vetoes the match; no way to pass external hints or use duration as evidence. Fixed: pinned ASIN is authoritative, `--hints` file, runtime within ±2 min preferred (see CONFIG.md) | — |
-| 3 | Missing id3 → the whole filename is the search title (`Author - Title.m4b` scores 41 against its own MAM entry) | #26 |
+| 3 | Missing id3 → the whole filename is the search title (`Author - Title.m4b` scores 41 against its own MAM entry). Fixed: release-name parsing (`flags/parse_names`, `--legacy-names` for the old behaviour), see CONFIG.md | #26 |
 | 4 | Empty Audible / MAM results and skeleton per-ASIN responses (`{asin, asset_details, is_vvab}`) are cached forever | #25 |
 | 5 | MAM session duplicated in every config file; `title_patterns` contain `"\b"` JSON escapes that become backspaces; exit code is 0 on failure | — |
 | 6 | `Series # - Title` folders: the log writes `seriesparts` as `Name part`, the log reader splits on `#` | #27 |
+| 6b | Multi-disc releases (`cd1/`, `Disc 01/`) are grouped per disc folder, so each disc is matched on its own, the runtime evidence is one disc long (the wrong edition can win), and `book` logs as `cd1..cdN`. Release-name parsing already resolves the release folder for the search; grouping the discs into one book is the remaining fix | #26 |
 | 7 | mousehole cookie integration (PR #24, updated for mousehole's v2 state file) | #24 |
 
 ## Regression replay

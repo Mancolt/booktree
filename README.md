@@ -4,6 +4,9 @@
 > run-log format so existing setups keep working, and fixes the matching, caching and OPF defects listed in
 > [docs/FORK.md](docs/FORK.md). Image: `ghcr.io/mancolt/booktree:latest`. Issues and pull requests are welcome; see
 > [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+>
+> **Status: pre-release.** `:latest` is published only from tagged releases (`v*`); every merge to `main` publishes
+> `:edge`, which is untested beyond CI. Until the first release the image is private.
 
 Reorganize your audiobooks using ID3 or Audible metadata into a tree structure recommended and supported by media servers like Audibookshelf. The originals are untouched and will be hardlinked to their destination
 

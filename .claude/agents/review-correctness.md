@@ -37,6 +37,10 @@ agent covers security. Report findings only; do not edit files.
 
 ## How to work
 
+* Containers: run your probes with `docker run --rm --name review-<random>` and clean up ONLY by that exact
+  name. Never kill, stop or remove containers you did not start, and never use `docker ps --filter ancestor=...`
+  or any other broad selector with `kill`/`rm`: other services on this host share base images with your probes.
+
 * Start with `git diff` (or the range you were given) and read the full functions around each hunk, not just the hunk.
 * Run the unit tests (`python3 -m unittest discover -s tests -p 'test_*.py'`) and, if `tests/replay/out/baseline`
   exists and the change touches matching/output code, confirm a replay comparison was produced; report its numbers.

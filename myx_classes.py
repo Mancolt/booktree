@@ -14,6 +14,7 @@ import myx_utilities
 import myx_audible
 import myx_mam
 import myx_hints
+import myx_names
 import copy
 
 #Module variables
@@ -421,6 +422,7 @@ class MAMBook:
     mamIDs:list[str]= field(default_factory=list)
     pinnedAsin:str=""
     hint:dict=None
+    parsedName:dict=None
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
@@ -449,6 +451,51 @@ class MAMBook:
         if self.hint and self.hint.get("duration_min"):
             return float(self.hint["duration_min"])
         return float(self.getRunTimeLength())
+
+    def getParsedName(self, book, cfg):
+        """Parse the release name once per book (Author - Title, Title [ASIN], ...); None when disabled."""
+        if not bool(cfg.get("Config/flags/parse_names", 1)):
+            return None
+        if self.parsedName is None:
+            src = self.files[0].sourcePath if self.files else ""
+            relName = myx_names.releaseNameForBook(self.files, src, self.name)
+            known = [a.name for a in book.authors] if book is not None else []
+            self.parsedName = myx_names.parseReleaseName(relName, known_authors=known,
+                                                          file_name=self.files[0].getFileName() if self.files else None)
+        return self.parsedName
+
+    def applyParsedName(self, book, cfg):
+        """Return (searchBook, applied) where searchBook is a copy of `book` with junk/empty title, authors
+        and asin replaced from the parsed release name. `applied` lists what was replaced."""
+        parsed = self.getParsedName(book, cfg)
+        applied = []
+        if parsed is None or book is None:
+            return book, applied
+        if self.hint and (self.hint.get("title") or self.hint.get("authors")):
+            return book, applied                      # hints take precedence over the release name
+        searchBook = book
+        relName = parsed.get("source") or self.name
+        if parsed["title"] and myx_names.isJunkTitle(book.title, relName) and \
+                myx_utilities.cleanseTitle(parsed["title"]).lower() != myx_utilities.cleanseTitle(book.title).lower():
+            searchBook = copy.copy(searchBook)
+            searchBook.title = parsed["title"]
+            applied.append("title")
+        if parsed["authors"] and myx_names.isJunkAuthors(book.authors):
+            if searchBook is book:
+                searchBook = copy.copy(searchBook)
+            searchBook.authors = [Contributor(a) for a in parsed["authors"]]
+            applied.append("authors")
+        if parsed["asin"] and not (book.asin or "").strip():
+            if searchBook is book:
+                searchBook = copy.copy(searchBook)
+            searchBook.asin = parsed["asin"]
+            applied.append("asin")
+        if applied and not getattr(self, "_parsedAnnounced", False):
+            #only books whose tags needed help get these lines: good-tag books keep upstream's output verbatim
+            self._parsedAnnounced = True
+            print(f"Parsed release name {relName!r}: title:{parsed['title']!r} authors:{parsed['authors']} series:{parsed['series']!r} part:{parsed['part']!r} asin:{parsed['asin']!r}")
+            print(f"Using parsed release name for {', '.join(applied)}")
+        return searchBook, applied
 
     def searchBookFromHint(self, book):
         """A copy of `book` with the hint's title/authors substituted for the Audible search (the original,
@@ -548,18 +595,203 @@ class MAMBook:
 
         return book
 
-    def getAudibleBooks(self, client, book, cfg):
-        #Config variables
+    def _audibleSearchKeys(self, book, cfg):
+        """Upstream's search-key construction for one Book: title, authors, narrators, series, keywords and the
+        'mamBook' comparison string used for scoring."""
+        add_narrators = bool(cfg.get("Config/flags/add_narrators"))
+        title = myx_utilities.cleanseTitle(book.title, stripUnabridged=True)
+
+        #Get Authors
+        authors=book.getAuthors(delimiter="|", encloser='"', stripaccents=False)
+
+        #Get Narrators
+        narrators=book.getNarrators(delimiter="|", encloser='"', stripaccents=False)
+
+        #sometimes Audible returns nothing if there's too much info in the keywords
+        series=""
+        if (len(book.series)==1):
+            series = myx_utilities.cleanseTitle(book.getSeries(), stripUnabridged=True)
+        elif len(book.series):
+            series = myx_utilities.cleanseTitle(book.series[0].name, stripUnabridged=True)
+
+        if add_narrators:
+            keywords=myx_utilities.optimizeKeys(cfg, [myx_utilities.cleanseTitle(title, stripUnabridged=True), 
+                                                series,
+                                                myx_utilities.cleanseAuthor(book.getAuthors(delimiter=" ")), 
+                                                myx_utilities.cleanseAuthor(book.getNarrators(delimiter=" "))])
+        else:
+            keywords=myx_utilities.optimizeKeys(cfg, [myx_utilities.cleanseTitle(title, stripUnabridged=True), 
+                                                series,
+                                                myx_utilities.cleanseAuthor(book.getAuthors(delimiter=" "))])
+
+        mamBook = '|'.join([f"Duration:{self.getRunTimeLength()}min", book.getAuthors(), book.getCleanTitle(), series])
+        if add_narrators:
+            mamBook = '|'.join([mamBook, book.getNarrators()])
+
+        return {"title": title, "authors": authors, "narrators": narrators, "series": series, "keywords": keywords,
+                "mamBook": mamBook, "language": book.language}
+
+    def _rankAudible(self, books, book, keys, cfg, hintCandidates=False, requireTitle=False, runtimeAlone=False):
+        """Upstream's interactive / best-match selection over Audible products. Sets audibleMatches and
+        bestAudibleMatch. requireTitle: a result must match the title (an author match alone is not enough),
+        used when the title came from the parsed release name rather than from tags."""
         minMatchRate = int(cfg.get("Config/matchrate"))
-        fixid3 = bool(cfg.get("Config/flags/fixid3"))
         verbose = bool(cfg.get("Config/flags/verbose"))
         add_narrators = bool(cfg.get("Config/flags/add_narrators"))
         interactive = bool(cfg.get("Config/flags/interactive", 0))
-
         fuzzy_match = cfg.get("Config/fuzzy_match")
+        title, mamBook = keys["title"], keys["mamBook"]
+
+        #process search results
+        self.audibleMatches=books
+        if (self.audibleMatches is not None):
+            if (verbose):
+                print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
+
+            if interactive:
+                #display choices to user to pick from
+                count = len(books)
+                if (count == 1):
+                    self.bestAudibleMatch=myx_audible.product2Book(books[0])
+                elif (count > 1):
+                    #There are multiple options, ask the user to pick one
+                    booksFound=[]
+                    choices=[]
+                    for product in books:
+                        abook = myx_audible.product2Book(product)
+                        booksFound.append(abook)
+
+                        #display
+                        print(f"[{len(booksFound)}] {abook.title}({abook.releaseDate}) by {abook.getAuthors()}/{abook.getNarrators()}, Duration: {myx_utilities.getDuration(abook.length)}, Language: {abook.language}, https://www.audible.com/pd/{abook.asin}")
+                        choices.append (len(booksFound))
+
+                    #add none
+                    print(f"[0] None of the above")                            
+                    choices.append (0)
+
+                    choice = myx_utilities.promptChoice (f"Pick a match [0-{len(booksFound)}]:  ", choices)
+                    if choice == 0:
+                        self.bestAudibleMatch = None
+                    else:
+                        if verbose: print(f"You've selected [{choice}] {booksFound[choice-1].title}({booksFound[choice-1].releaseDate}) by {booksFound[choice-1].getAuthors()}, ASIN: {booksFound[choice-1].asin}, Language: {booksFound[choice-1].language}")
+                        self.bestAudibleMatch=booksFound[choice-1]
+
+            else:
+                bestMatchRate=0
+                expectedDuration = self.getExpectedDuration()
+                scored = []
+                #find the best match
+                print(f"Finding the best Audible match out of {len(books)} results")
+                for product in books:
+                    abook=myx_audible.product2Book(product)
+                    if not abook.title:
+                        #Audible answers some ASIN lookups with a skeleton {asin, asset_details, is_vvab}: not a match
+                        print (f"\tIgnoring Audible result {abook.asin} without a title (incomplete catalog entry)")
+                        continue
+                    #the author is known, check if this book is this authors book
+                    #otherwise, if maybe this title is close enough
+                    authorOK = bool(not hintCandidates and len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg))
+                    if hintCandidates or (authorOK and not requireTitle):
+                        #hinted candidates were chosen by the caller: no title/author gate
+                        accepted = True
+                    elif myx_utilities.isThisMyBookTitle(title, abook, cfg): 
+                        accepted = True
+                    else:
+                        accepted = False
+                    if accepted:
+                        audibleBook = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
+                        if add_narrators:
+                            audibleBook = '|'.join([audibleBook, abook.getNarrators()])
+                    else:
+                        print (f"This book doesn't have a matching title or author, checking the next book...")
+                        continue        
+
+                    #include this book in the comparison
+                    matchRate=myx_utilities.fuzzymatch(mamBook, audibleBook)
+                    abook.matchRate=matchRate[fuzzy_match]
+
+                    print(f"\tMatch Rate: {matchRate}\n\tSearch: {mamBook}\n\tResult: {audibleBook}\n\tBest Match Rate: {bestMatchRate}\n")
+                    
+                    delta = myx_hints.durationDelta(expectedDuration, abook.length)
+                    if delta is not None:
+                        print(f"\tDuration: {abook.length}min vs expected {expectedDuration:.0f}min (difference {delta:.0f}min)")
+                    scored.append((abook, matchRate[fuzzy_match], delta))
+                    if (matchRate[fuzzy_match] > bestMatchRate) and (matchRate[fuzzy_match] >= minMatchRate):
+                        bestMatchRate=matchRate[fuzzy_match]
+
+                best = myx_hints.pickBest(scored, minMatchRate, requireRate=not (hintCandidates or runtimeAlone))
+                if best is not None:
+                    abook, rate, delta = best
+                    if myx_hints.withinTolerance(delta) and rate < bestMatchRate:
+                        print(f"\tDuration match preferred: {abook.title} ({abook.length}min is within {myx_hints.DURATION_TOLERANCE_MIN}min of {expectedDuration:.0f}min, score {rate})")
+                    elif (hintCandidates or runtimeAlone) and rate < minMatchRate:
+                        what = "Hinted candidate" if hintCandidates else "Title-verified result"
+                        print(f"\t{what} accepted on duration: {abook.title} ({abook.length}min vs {expectedDuration:.0f}min, score {rate})")
+                    self.bestAudibleMatch=abook
+        return self.bestAudibleMatch
+
+    def _audibleAttempts(self, book, cfg, searchAsin):
+        """The ordered search attempts for a book: (label, Book to search with, asin, requireTitle).
+
+        With usable tags (or with parsing disabled) there is exactly one attempt, upstream's. When the release
+        name had to supply the title/authors: parsed -> swapped reading -> title only -> upstream's search, so a
+        wrong parse can never lose a match upstream would have found."""
+        hintedTitle = bool(self.hint and self.hint.get("title"))
+        hintedAuthors = bool(self.hint and self.hint.get("authors"))
+        interactive = bool(cfg.get("Config/flags/interactive", 0))
+        attempts = []
+        parsedApplied = []
+        #interactive mode auto-accepts a lone result without any gate, which the permissive retries would abuse:
+        #a person is choosing, so only upstream's search runs there
+        if not (hintedTitle or hintedAuthors or interactive):
+            parsedBook, parsedApplied = self.applyParsedName(book, cfg)
+        if parsedApplied:
+            pAsin = parsedBook.asin if ("asin" in parsedApplied and not searchAsin) else searchAsin
+            requireTitle = "title" in parsedApplied
+            attempts.append(("parsed", parsedBook, pAsin, requireTitle))
+            parsedAuthors = (self.parsedName or {}).get("authors") or []
+            if parsedAuthors and "authors" not in parsedApplied and not pAsin and not myx_names.authorsOverlap(
+                    [a.name for a in parsedBook.authors], parsedAuthors):
+                #the tags name someone else (often the narrator in the artist tag): try the release name's authors
+                namedBook = copy.copy(parsedBook)
+                namedBook.authors = [Contributor(a) for a in parsedAuthors]
+                attempts.append(("parsed-authors", namedBook, "", True))
+            alt = self.parsedName.get("alternative") if self.parsedName else None
+            if alt and not pAsin and "title" in parsedApplied:
+                altBook = copy.copy(parsedBook)
+                altBook.title, altBook.authors = alt["title"], [Contributor(a) for a in alt["authors"]]
+                attempts.append(("swapped", altBook, "", True))
+            if parsedBook.authors and not pAsin:
+                soloBook = copy.copy(parsedBook)
+                soloBook.authors = []
+                attempts.append(("title-only", soloBook, "", True))
+        #upstream's search, exactly as before; its getAltTitle step runs when this attempt is reached (see caller)
+        attempts.append(("legacy", book, searchAsin, False))
+        #drop attempts that would repeat an identical query with a stricter gate (e.g. title-only then legacy when
+        #the tag title is good and the artist tag empty): same result set, cannot succeed where the earlier one failed
+        seen = set(); unique = []
+        for att in attempts:
+            label, b, asin_, _ = att
+            key = (b.title, tuple(a.name for a in b.authors), asin_)
+            if label == "legacy" and (len(b.title) == 0 or bool(cfg.get("Config/flags/fixid3"))):
+                key = ("<alt-title>",)                      # legacy will derive a different title: always distinct
+            if key in seen:
+                continue
+            seen.add(key); unique.append(att)
+        return unique
+
+    def getAudibleBooks(self, client, book, cfg):
+        #Config variables
+        add_narrators = bool(cfg.get("Config/flags/add_narrators"))
+        fixid3 = bool(cfg.get("Config/flags/fixid3"))
+        hintedTitle = bool(self.hint and self.hint.get("title"))
 
         books=[]
-        searchAsin = book.asin if book is not None else ""
+        searchAsin = str(book.asin or "").strip() if book is not None else ""
+        if searchAsin and not myx_hints.isAsin(searchAsin):
+            #a malformed AUDIBLE_ASIN tag would otherwise be interpolated into the per-ASIN URL and guarantee a miss
+            print(f"Ignoring malformed ASIN tag {searchAsin!r}")
+            searchAsin = ""
         if self.pinnedAsin:
             if self.acceptPinnedAsin(client, cfg, book, book.language if book is not None else "english") is not None:
                 return self.bestAudibleMatch
@@ -568,171 +800,46 @@ class MAMBook:
                 searchAsin = ""
 
         hintCandidates = list(self.hint.get("candidates", [])) if self.hint else []
-        hintedTitle = bool(self.hint and self.hint.get("title"))
         if (book is not None):
             book = self.searchBookFromHint(book)
             language=book.language
-            # book = self.ffprobeBook
-            if ((len(book.title) == 0) or (fixid3)) and not hintedTitle:
-                book.title = myx_utilities.getAltTitle (self.name, book, cfg) 
-            
-            title = myx_utilities.cleanseTitle(book.title, stripUnabridged=True)
 
-            #Get Authors
-            authors=book.getAuthors(delimiter="|", encloser='"', stripaccents=False)
-
-            #Get Narrators
-            narrators=book.getNarrators(delimiter="|", encloser='"', stripaccents=False)
-
-            #sometimes Audible returns nothing if there's too much info in the keywords
-            series=""
-            if (len(book.series)==1):
-                series = myx_utilities.cleanseTitle(book.getSeries(), stripUnabridged=True)
-            elif len(book.series):
-                series = myx_utilities.cleanseTitle(book.series[0].name, stripUnabridged=True)
-            
-            if add_narrators:
-                keywords=myx_utilities.optimizeKeys(cfg, [myx_utilities.cleanseTitle(title, stripUnabridged=True), 
-                                                    series,
-                                                    myx_utilities.cleanseAuthor(book.getAuthors(delimiter=" ")), 
-                                                    myx_utilities.cleanseAuthor(book.getNarrators(delimiter=" "))])
-            else:
-                keywords=myx_utilities.optimizeKeys(cfg, [myx_utilities.cleanseTitle(title, stripUnabridged=True), 
-                                                    series,
-                                                    myx_utilities.cleanseAuthor(book.getAuthors(delimiter=" "))])
-
-            #print(f"Searching Audible for\n\tasin:{book.asin}\n\ttitle:{title}\n\tauthors:{book.authors}\n\tnarrators:{book.narrators}\n\tkeywords:{keywords}")
-            
-            #generate author, narrator combo
-            # author_narrator=[]
-            # for i in range(len(book.authors)):
-            #     if add_narrators and len(book.narrators):
-            #         for j in range(len(book.narrators)):
-            #             author_narrator.append((book.authors[i].name, book.narrators[j].name))
-            #     else:
-            #             author_narrator.append((book.authors[i].name, ""))
-
-            #print (author_narrator)
-
-            # for an in author_narrator:
-            #     #print (f"Author: {an[0]}\tNarrator: {an[1]}")
-            #     sAuthor=myx_utilities.cleanseAuthor(an[0])
-            #     sNarrator=myx_utilities.cleanseAuthor(an[1])
-            #     books=myx_audible.getAudibleBook (client, cfg, asin=book.asin, title=title, authors=sAuthor, narrators=sNarrator, keywords=keywords, language=language)
-
-            #     #book found, exit for loop
-            #     if ((books is not None) and len(books)):
-            #         break
             if hintCandidates:
-                #caller-supplied candidates: fetched by ASIN, ranked below by duration then fuzzy score
+                #caller-supplied candidates: fetched by ASIN, ranked by duration then fuzzy score
+                if ((len(book.title) == 0) or (fixid3)) and not hintedTitle:
+                    book.title = myx_utilities.getAltTitle (self.name, book, cfg) 
+                keys = self._audibleSearchKeys(book, cfg)
                 print(f"Fetching {len(hintCandidates)} hinted candidate ASIN(s) for {self.name}")
                 books=[]
                 for candidate in hintCandidates:
                     books.extend(myx_audible.getAudibleBook (client, cfg, asin=candidate, language=language) or [])
-            elif add_narrators:
-                books=myx_audible.getAudibleBook (client, cfg, asin=searchAsin, title=title, authors=authors, narrators=narrators, keywords=keywords, language=language)
+                self._rankAudible(books, book, keys, cfg, hintCandidates=True)
             else:
-                books=myx_audible.getAudibleBook (client, cfg, asin=searchAsin, title=title, authors=authors, keywords=keywords, language=language)
-                
-            #too constraining?  try just a keywords search with all information
-            # if ((books is None) or ((books is not None) and (len(books) == 0))):
-            #     #print (f"Nothing was found so just doing a keyword search {keywords}")
-            #     books=myx_audible.getAudibleBook (client, cfg, keywords=keywords, language=language)
-
-            mamBook = '|'.join([f"Duration:{self.getRunTimeLength()}min", book.getAuthors(), book.getCleanTitle(), series])
-            if add_narrators:
-                mamBook = '|'.join([mamBook, book.getNarrators()])
-
-            #process search results
-            self.audibleMatches=books
-            if (self.audibleMatches is not None):
-                if (verbose):
-                    print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
-
-                if interactive:
-                    #display choices to user to pick from
-                    count = len(books)
-                    if (count == 1):
-                        self.bestAudibleMatch=myx_audible.product2Book(books[0])
-                        found=True
-                    elif (count > 1):
-                        #There are multiple options, ask the user to pick one
-                        #print (f"Pick the best match for {book.getCleanTitle()}, Duration: {myx_utilities.getDuration(self.getRunTimeLength())}, Narrators: {book.getNarrators()}")
-                        booksFound=[]
-                        choices=[]
-                        for product in books:
-                            abook = myx_audible.product2Book(product)
-                            booksFound.append(abook)
-
-                            #display
-                            print(f"[{len(booksFound)}] {abook.title}({abook.releaseDate}) by {abook.getAuthors()}/{abook.getNarrators()}, Duration: {myx_utilities.getDuration(abook.length)}, Language: {abook.language}, https://www.audible.com/pd/{abook.asin}")
-                            choices.append (len(booksFound))
-
-                        #add none
-                        print(f"[0] None of the above")                            
-                        choices.append (0)
-
-                        choice = myx_utilities.promptChoice (f"Pick a match [0-{len(booksFound)}]:  ", choices)
-                        if choice == 0:
-                            self.bestAudibleMatch = None
-                        else:
-                            if verbose: print(f"You've selected [{choice}] {booksFound[choice-1].title}({booksFound[choice-1].releaseDate}) by {booksFound[choice-1].getAuthors()}, ASIN: {booksFound[choice-1].asin}, Language: {booksFound[choice-1].language}")
-                            self.bestAudibleMatch=booksFound[choice-1]
-
-                else:
-                    bestMatchRate=0
-                    expectedDuration = self.getExpectedDuration()
-                    scored = []
-                    #find the best match
-                    print(f"Finding the best Audible match out of {len(books)} results")
-                    for product in books:
-                        abook=myx_audible.product2Book(product)
-                        if not abook.title:
-                            #Audible answers some ASIN lookups with a skeleton {asin, asset_details, is_vvab}: not a match
-                            print (f"\tIgnoring Audible result {abook.asin} without a title (incomplete catalog entry)")
-                            continue
-                        #the author is known, check if this book is this authors book
-                        #otherwise, if maybe this title is close enough
-                        #print (f"{abook.title} by {abook.authors}...")
-                        if hintCandidates or (len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)):
-                            #hinted candidates were chosen by the caller: no title/author gate
-                            audibleBook = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
-                            if add_narrators:
-                                audibleBook = '|'.join([audibleBook, abook.getNarrators()])
-                        elif myx_utilities.isThisMyBookTitle(title, abook, cfg): 
-                            audibleBook = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
-                            if add_narrators:
-                                audibleBook = '|'.join([audibleBook, abook.getNarrators()])
-                        else:
-                            print (f"This book doesn't have a matching title or author, checking the next book...")
-                            continue        
-
-                        #include this book in the comparison
-                        matchRate=myx_utilities.fuzzymatch(mamBook, audibleBook)
-                        abook.matchRate=matchRate[fuzzy_match]
-
-                        print(f"\tMatch Rate: {matchRate}\n\tSearch: {mamBook}\n\tResult: {audibleBook}\n\tBest Match Rate: {bestMatchRate}\n")
-                        
-                        delta = myx_hints.durationDelta(expectedDuration, abook.length)
-                        if delta is not None:
-                            print(f"\tDuration: {abook.length}min vs expected {expectedDuration:.0f}min (difference {delta:.0f}min)")
-                        scored.append((abook, matchRate[fuzzy_match], delta))
-                        if (matchRate[fuzzy_match] > bestMatchRate) and (matchRate[fuzzy_match] >= minMatchRate):
-                            bestMatchRate=matchRate[fuzzy_match]
-
-                    best = myx_hints.pickBest(scored, minMatchRate, requireRate=not hintCandidates)
-                    if best is not None:
-                        abook, rate, delta = best
-                        if myx_hints.withinTolerance(delta) and rate < bestMatchRate:
-                            print(f"\tDuration match preferred: {abook.title} ({abook.length}min is within {myx_hints.DURATION_TOLERANCE_MIN}min of {expectedDuration:.0f}min, score {rate})")
-                        elif hintCandidates and rate < minMatchRate:
-                            print(f"\tHinted candidate accepted on duration: {abook.title} ({abook.length}min vs {expectedDuration:.0f}min, score {rate})")
-                        self.bestAudibleMatch=abook
+                attempts = self._audibleAttempts(book, cfg, searchAsin)
+                for label, sBook, sAsin, requireTitle in attempts:
+                    if label == "swapped":
+                        print(f"No match; retrying with the release name read the other way round: title:{sBook.title!r} authors:{[a.name for a in sBook.authors]}")
+                    elif label == "parsed-authors":
+                        print(f"No match; retrying with the authors from the release name: {[a.name for a in sBook.authors]}")
+                    elif label == "title-only":
+                        print("No match; retrying the Audible search with the title only")
+                    elif label == "legacy" and len(attempts) > 1:
+                        print("No match; retrying with the file's own tags as before")
+                    if label == "legacy" and ((len(sBook.title) == 0) or (fixid3)) and not hintedTitle:
+                        #upstream: derive a title from the folder name when the tag is empty (mutates the tag title, as upstream did)
+                        sBook.title = myx_utilities.getAltTitle (self.name, sBook, cfg) 
+                    keys = self._audibleSearchKeys(sBook, cfg)
+                    if add_narrators:
+                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], narrators=keys["narrators"], keywords=keys["keywords"], language=language)
+                    else:
+                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], keywords=keys["keywords"], language=language)
+                    #title-only: the title is verified by the gate and no author is known to score with, so a runtime
+                    #within tolerance is accepted on its own (pickBest requireRate=False)
+                    if self._rankAudible(books, sBook, keys, cfg, requireTitle=requireTitle, runtimeAlone=(label == "title-only")) is not None:
+                        break
         #end if
 
-        #pprint(self.bestAudibleMatch)
         if (books is not None): 
-            #pprint (books)            
             return self.bestAudibleMatch
         else: 
             return None
@@ -865,6 +972,9 @@ class MAMBook:
         title = f'{bookFile.getFileName()}'
         authors=self.ffprobeBook.getAuthors(delimiter="|", encloser='"', stripaccents=False)
         extension = f'"{bookFile.getExtension()}"'
+        #for RANKING (never for the MAM query string) use the parsed release name where the id3 tags are junk
+        rankBook, parsedApplied = self.applyParsedName(self.ffprobeBook, cfg) if (self.ffprobeBook is not None and not interactive) else (None, [])
+        rankTitle = rankBook.title if "title" in parsedApplied else title
     
         # Search using book key and authors (using or search in case the metadata is bad)
         print(f"Searching MAM for\n\tTitleFilename: {title}\n\tauthors:{authors}")
@@ -879,7 +989,7 @@ class MAMBook:
 
         #Find the best match
         self.mamMatches = books
-        book = self.ffprobeBook
+        book = rankBook if rankBook is not None else self.ffprobeBook
 
         if (not ebooks) and (self.mamMatches is not None) and (book is not None):
             if (verbose):
@@ -916,7 +1026,7 @@ class MAMBook:
                     bestMatchRate=0
                     #find the best match
                     print(f"Finding the best MAM match out of {len(books)} results")
-                    targetBook = '|'.join([self.ffprobeBook.title, self.ffprobeBook.getAuthors(), self.ffprobeBook.getSeriesParts()])
+                    targetBook = '|'.join([book.title, book.getAuthors(), book.getSeriesParts()])
             
                     for abook in books:
                         #if this book is snatched, include in the match
@@ -924,11 +1034,12 @@ class MAMBook:
                             #the author is known, check if this book is this authors book
                             #otherwise, if maybe this title is close enough
                             #print (f"{abook.title} by {abook.authors}...")
-                            if len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg):
+                            authorOK = bool(len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg))
+                            if authorOK and "title" not in parsedApplied:
                                 mamBook = '|'.join([abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
                                 if add_narrators:
                                     mamBook = '|'.join([mamBook, abook.getNarrators()])
-                            elif myx_utilities.isThisMyBookTitle(title, abook, cfg): 
+                            elif myx_utilities.isThisMyBookTitle(rankTitle, abook, cfg): 
                                 mamBook = '|'.join([abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
                                 if add_narrators:
                                     mamBook = '|'.join([mamBook, abook.getNarrators()])
