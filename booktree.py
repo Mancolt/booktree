@@ -143,8 +143,9 @@ def buildTreeFromLog(files, logfile, cfg):
         print("\n\n")    
     else:
         print(f"Your input file {inputFile} is invalid. Please check and try again!")
+        return False
 
-    return    
+    return True
 
 def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     #Variables
@@ -350,7 +351,7 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     myx_utilities.printDivider()
 
 
-    return
+    return True
 
 
 RUN_STARTED = datetime.now(timezone.utc)
@@ -384,14 +385,24 @@ def writeJsonLog(cfg, logfile, books, matched):
         print(f"JSON log could not be written to {path}: {e}")
 
 
+#Exit codes, so that callers (hooks, timers) can tell a failed run from a clean one:
+#0 every configured path was processed; 1 an unhandled error (traceback printed); 2 a configuration or input problem
+#(config file, paths, hints file, MAM session); 130 interrupted.
+EXIT_OK, EXIT_ERROR, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 130
+CURRENT_LOGFILE = None      # the CSV of the run in progress, for the failure record
+
+
 def main(cfg):
+    global CURRENT_LOGFILE
     #make sure log_path and cache path exists
     log_path=myx_utilities.getLogPath(cfg)
 
     #create the logfile
     logfile=os.path.join(os.path.abspath(log_path),f"booktree_log_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv")
+    CURRENT_LOGFILE = logfile
 
-    for paths in cfg.get("Config/paths"):
+    failed = 0
+    for paths in cfg.get("Config/paths"):        # validated in run(): a non-empty list of objects
         #validate that source_path and media_path exists
         files=paths["files"]
         path=paths["source_path"]
@@ -400,47 +411,104 @@ def main(cfg):
         if (os.path.exists(path) and os.path.exists(mediaPath)):
             #build tree from identified sources
             if (cfg.get("Config/metadata") == "log"):
-                buildTreeFromLog(files, logfile, cfg)
+                ok = buildTreeFromLog(files, logfile, cfg)
             else:
-                buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg)            
+                ok = buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg)
+            if not ok:
+                failed += 1
         else:
             print(f"Your source and media paths are invalid. Please check and try again!\nSource:{path}\nMedia:{mediaPath}")
+            failed += 1
 
-if __name__ == "__main__":
-    
+    return EXIT_USAGE if failed else EXIT_OK
+
+
+def writeFailureRecord(cfg, code, error):
+    """--json-log only: a final run record naming the exit code and the error, so a consumer of the JSON log can
+    see that the run did not complete. Best effort; never raises."""
+    try:
+        if cfg is None or CURRENT_LOGFILE is None:
+            return
+        path = jsonLogPath(cfg, CURRENT_LOGFILE)
+        if not path:
+            return
+        run_id = os.path.splitext(os.path.basename(CURRENT_LOGFILE))[0].replace("booktree_log_", "")
+        rec = myx_jsonlog.runRecord(run_id, RUN_STARTED, cfg, [], 0, 0, CURRENT_LOGFILE, exit_code=code)
+        rec["error"] = error
+        myx_jsonlog.write(path, [rec])
+    except Exception:
+        pass
+
+
+def run():
+    """Parse arguments, validate the configuration, process every path; returns the exit code."""
     if not sys.version_info > (3, 10):
         print ("booktree requires python 3.10 or higher. Please upgrade your version")
-    else:
-        #process commandline arguments
-        myx_args.params = myx_args.importArgs()
+        return EXIT_USAGE
 
-        #check if config files are present
-        if ((myx_args.params.config_file is not None) and os.path.exists(myx_args.params.config_file)):
-            try:
-                #import config
-                cfg = myx_args.Config(myx_args.params)
+    #process commandline arguments (argparse itself exits with 2 on a usage error)
+    myx_args.params = myx_args.importArgs()
 
-            except Exception as e:
-                raise Exception(f"\nThere was a problem reading your config file {myx_args.params.config_file}: {e}\n")
-            
-            #check metadata source
-            metadata = cfg.get("Config/metadata")
+    #check if config files are present
+    if (myx_args.params.config_file is None) or (not os.path.exists(myx_args.params.config_file)):
+        print(f"\nYour config path is invalid. Please check and try again!\n\tConfig file path:{myx_args.params.config_file}\n")
+        return EXIT_USAGE
 
-            #validate the hints file up front: a silently ignored hint would look like a matching failure
-            myx_hints.getHints(cfg)
+    try:
+        #import config
+        cfg = myx_args.Config(myx_args.params)
+    except Exception as e:
+        print(f"\nThere was a problem reading your config file {myx_args.params.config_file}: {e}\n")
+        return EXIT_USAGE
 
-            if ("mam" in metadata):
-                #check the cookie
-                print ("Checking MAM cookie")
-                if not myx_mam.checkMAMCookie(cfg):
-                    #display error
-                    raise Exception (f"Your MAM cookie is not valid... please check your session and rerun booktree")
+    #check metadata source
+    metadata = str(cfg.get("Config/metadata") or "")
 
-            #start the program
-            main(cfg)
+    #validate the hints file up front: a silently ignored hint would look like a matching failure
+    try:
+        myx_hints.getHints(cfg)
+    except (myx_hints.HintsError, ValueError, OSError) as e:
+        #HintsError and JSONDecodeError are both ValueErrors; an unreadable or malformed file is a usage error too
+        print(f"\nCould not use the hints file: {e}\n")
+        return EXIT_USAGE
 
-        else:
-            print(f"\nYour config path is invalid. Please check and try again!\n\tConfig file path:{myx_args.params.config_file}\n")
+    #each Config/paths entry must be an object with the three keys main() reads
+    entries = cfg.get("Config/paths")
+    if not isinstance(entries, list) or not entries or any(
+        not isinstance(p, dict) or not {"files", "source_path", "media_path"} <= set(p) for p in entries
+    ):
+        print("\nConfig/paths must be a non-empty list of objects with files, source_path and media_path. Please check and try again!\n")
+        return EXIT_USAGE
+
+    if ("mam" in metadata):
+        #check the cookie
+        print ("Checking MAM cookie")
+        if not myx_mam.checkMAMCookie(cfg):
+            print ("\nYour MAM cookie is not valid... please check your session and rerun booktree\n")
+            return EXIT_USAGE
+
+    #start the program
+    try:
+        return main(cfg)
+    except KeyboardInterrupt:
+        writeFailureRecord(cfg, EXIT_INTERRUPTED, "interrupted")
+        raise
+    except Exception as e:
+        writeFailureRecord(cfg, EXIT_ERROR, f"{type(e).__name__}: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    try:
+        code = run()
+    except KeyboardInterrupt:
+        print("\nInterrupted")
+        code = EXIT_INTERRUPTED
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        code = EXIT_ERROR
+    sys.exit(code)
 
 
 

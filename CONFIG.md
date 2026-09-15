@@ -39,7 +39,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
             "skip_series": 0,
             "kw_ignore": [".", ":", "_", "[", "]", "{", "}", ",", ";", "(", ")"],
             "kw_ignore_words": ["the","and","m4b","mp3","series","audiobook","audiobooks", "book", "part", "track", "novel", "disc"],
-            "title_patterns": ["-end", "\bpart\b", "\btrack\b", "\bof\b",  "\bbook\b", "m4b", "\\(", "\\)", "_", "\\[", "\\]", "\\.", "\\s?-\\s?"]
+            "title_patterns": ["-end", "\\bpart\\b", "\\btrack\\b", "\\bof\\b", "\\bbook\\b", "m4b", "\\(", "\\)", "_", "\\[", "\\]", "\\.", "\\s?-\\s?"]
         }  
     }
 }
@@ -52,7 +52,8 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | fuzzy_match |         | Fuzzy match algorithm: (partial, token_sort, ratio) | token_sort |
 | log_path    |         | Where your log files will be saved. If not set, will default to "logs" | /logs (for docker), logs (for local)   |
 | cache_path  |         | Where your log files will be saved. If not set, will default to "logs" | /config   |
-| session     |         | MAM Session ID (can be removed once one has been saved). When left empty/omitted, booktree falls back to the `MAM_SESSION` environment variable, so the cookie can come from a secret store instead of a committed config. **Note:** MAM sessions are IP/ASN-locked, so this only works when booktree runs from the network the session was created on (i.e. locally); it will not help from a Cloud Agent VM, which egresses from a datacenter ASN. |    |
+| session     |         | MAM session cookie (`mam_id`). Leave it empty and set `MAM_SESSION` or `MAM_SESSION_FILE` instead so the cookie is not repeated in every config file; see [MAM session](#mam-session-where-the-cookie-comes-from). Can be removed once a run has saved it to the cookie store. **Note:** MAM sessions are IP/ASN-locked, so a session only works from the network it was created on. |    |
+| mousehole_state_file | | Path of a [mousehole](https://github.com/t-mart/mousehole) `state.json`; when set (or `MOUSEHOLE_STATE_FILE` is set), the cookie is read from it on every run. See [MAM session](#mam-session-where-the-cookie-comes-from). |    |
 | hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
 | flags/parse_names | | Parse the release folder/file name (`Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`, `(Unabridged)` noise) and use it for the search where the id3 tags are empty or junk (`AudioTrack 01`, `unknown artist`, or a title that just repeats the file name). `--legacy-names` turns it off. | 1 |
 | pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
@@ -88,8 +89,45 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | | skip_series         | Used when fixid3 is true and an alt Title is generated from the id3-series data | 0   |
 | | kw_ignore           | Characters ignored when generating keywords for search | | [".", ":", "_", "[", "]", "{", "}", ",", ";", "(", ")"]    |
 | | kw_ignore_words     | Characters ignored when optimizing keywords for search| ["the","and","m4b","mp3","series","audiobook","audiobooks", "book", "part", "track", "novel", "disc"]    |
-| | title_patterns      | ignores these patterns when alt Title is generated from bad id3 data | ["-end", "\bpart\b", "\btrack\b", "\bof\b",  "\bbook\b", "m4b", "\\(", "\\)", "_", "\\[", "\\]", "\\.", "\\s?-\\s?"]    |
+| | title_patterns      | Regexes removed when an alt Title is generated from bad id3 data. Note the JSON escaping: a word boundary is `"\\b"`; `"\bpart\b"` is the word between two backspace characters and never matches (upstream's template shipped it that way; booktree now reads such a pattern as the intended `\b` and says so once) | ["-end", "\\bpart\\b", "\\btrack\\b", "\\bof\\b", "\\bbook\\b", "m4b", "\\(", "\\)", "_", "\\[", "\\]", "\\.", "\\s?-\\s?"]    |
 
+
+## MAM session: where the cookie comes from
+
+booktree needs your MAM session cookie (`mam_id`) for `mam` and `mam-audible`. It is looked up in this order, and
+the first one MAM accepts is used for the run:
+
+1. **mousehole state file**, when `Config/mousehole_state_file` or the environment variable `MOUSEHOLE_STATE_FILE`
+   names one. [mousehole](https://github.com/t-mart/mousehole) keeps the cookie valid as your IP changes, so booktree
+   reads the file on every run and sends the value verbatim, as mousehole does. Both mousehole's current file
+   (`{"version": 2, "cookie": "..."}`) and its legacy one (`{"currentCookie": "..."}`) are understood. Nothing is
+   written back, and a rotated cookie is not copied anywhere: mousehole owns it. Mount mousehole's state directory
+   read-only into the booktree container, for example `-v /path/to/mousehole:/mousehole:ro` with
+   `"mousehole_state_file": "/mousehole/state.json"`. Note mousehole's own caveat: MAM may rotate the cookie value
+   when a client calls it, and a rotation booktree receives is not written back to mousehole's file. If your
+   mousehole session drops after booktree runs, give booktree a MAM session of its own (option 3) instead of
+   sharing mousehole's.
+2. **cookie store** `<log_path>/cookies.json`: the cookie MAM last handed back to booktree (MAM rotates the value).
+   Written by booktree with mode 0600 after a successful check; removed when MAM rejects it (not when MAM merely
+   could not be reached). It replaces upstream's
+   `cookies.pkl`, a pickle that was loaded from a shared directory on every run (loading a pickle runs whatever is
+   in it); an existing `cookies.pkl` is deleted, never loaded, and the next run re-validates from the config.
+3. **`Config/session`**, or when that is empty the environment variable `MAM_SESSION`, or the first line of the file
+   named by `MAM_SESSION_FILE` (a docker/compose secret). This lets all your config files leave `session` blank and
+   the cookie live in one place: `docker run -e MAM_SESSION_FILE=/run/secrets/mam_session ...` or
+   `-e MAM_SESSION=...`.
+
+The cookie value is never printed; messages name the source (`Checking MAM cookie from the mousehole...`). MAM
+sessions are IP/ASN-locked: a cookie created on one network does not work from another.
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | every configured path was processed (matched or not) |
+| 1 | an unhandled error; the traceback is on stdout/stderr and, with `--json-log`, a final `run` record carries `exit_code` and `error` |
+| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
+| 130 | interrupted |
 
 ## Hints file (`--hints <json>` or `Config/hints_file`)
 

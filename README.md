@@ -53,7 +53,19 @@ options:
 
 1. run pip install -r requirements.txt to install dependencies
 2. copy default_config.cfg into config.json and modify with your paths settings (files, source_path, media_path)
-3. if using MAM as a source, create a MAM session ID and set the value in config.json file (/Config/session)
+3. if using MAM as a source, create a MAM session ID (MAM Preferences > Security) and give it to booktree **once**, in
+   one of these ways (see [CONFIG.md](CONFIG.md#mam-session-where-the-cookie-comes-from)):
+   * the environment variable `MAM_SESSION`, or `MAM_SESSION_FILE` pointing at a docker/compose secret file, with
+     `session` left blank in every config file;
+   * a [mousehole](https://github.com/t-mart/mousehole) state file mounted read-only and named in
+     `Config/mousehole_state_file` (or `MOUSEHOLE_STATE_FILE`), if mousehole keeps your MAM session alive;
+   * `/Config/session` in the config file, as upstream did.
+
+   After a successful check booktree keeps the cookie MAM handed back in `<log_path>/cookies.json` (owner-readable),
+   so a rotated cookie survives between runs. The value is never printed.
+
+booktree exits 0 when every configured path was processed, 2 for a configuration or input problem, 1 for an
+unhandled error ([CONFIG.md](CONFIG.md#exit-codes)).
 
 ### Recommended Workflow
 

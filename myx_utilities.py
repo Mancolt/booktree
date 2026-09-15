@@ -501,10 +501,32 @@ def isThisMyBookTitle (title, book, cfg):
 
     return match
     
+_warnedTitlePatterns = False
+
+
+def titlePatterns(cfg):
+    """Config/tokens/title_patterns as usable regexes. In JSON, "\\bpart\\b" written as "\bpart\b" is the word
+    "part" between two BACKSPACE characters, which never matches anything; upstream's template shipped exactly that,
+    so a backspace in a pattern is repaired to the word boundary it was meant to be (once, with a note)."""
+    global _warnedTitlePatterns
+    patterns = cfg.get("Config/tokens/title_patterns") or []
+    fixed = []
+    for p in patterns:
+        p = str(p)
+        if "\b" in p:
+            p = p.replace("\b", r"\b")
+            if not _warnedTitlePatterns:
+                _warnedTitlePatterns = True
+                print('Note: Config/tokens/title_patterns contains "\\b" written as a JSON backspace; '
+                      'reading it as a word boundary. Write it as "\\\\b" in the config file.')
+        fixed.append(p)
+    return fixed
+
+
 def getAltTitle(parent, book, cfg):
     #Config
     verbose = bool(cfg.get("Config/flags/verbose"))
-    patterns = cfg.get ("Config/tokens/title_patterns")
+    patterns = titlePatterns(cfg)
     skipSeries = bool (cfg.get ("Config/tokens/skip_series"))
 
     stop = False

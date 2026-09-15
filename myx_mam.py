@@ -1,12 +1,12 @@
 import requests
 import json
 import os
-import pickle
 import time
 from pprint import pprint
 import myx_classes
 import myx_utilities
 import myx_jsonlog
+import myx_session
 
 
 #MAM traffic rules: MAM sessions are IP/ASN-locked and rate-sensitive, so every HTTP request to MAM is spaced
@@ -60,14 +60,22 @@ def resetRunCounters():
     _mamQueriesThisRun = 0
     _lastMamRequest = 0.0
     _cookieTestedThisRun = False
+    myx_session.reset()
+
+
+def _newSession(cfg):
+    """A requests session carrying the mam_id cookie booktree should use now; (session, cookie value, source)."""
+    value, source = myx_session.resolve(cfg)
+    sess = requests.Session()
+    if value:
+        myx_session.apply(sess, value)
+    return sess, value, source
 
 
 #MAM Functions
 def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
     global _mamQueriesThisRun
     #Config
-    session = cfg.get("Config/session")
-    log_path = cfg.get("Config/log_path")
     verbose = bool(cfg.get("Config/flags/verbose"))
 
     ebook = bool(cfg.get("Config/flags/ebooks"))
@@ -104,19 +112,11 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
         return None
 
     else:
-        #save cookie for future use
-        cookies_filepath = os.path.join(log_path, 'cookies.pkl')
-        sess = requests.Session()
+        #the mam_id comes from mousehole, the cookie store or the config/env (myx_session); never from a pickle
+        sess, session, source = _newSession(cfg)
 
-        #a cookie file exists, use that
-        if os.path.exists(cookies_filepath):
-            cookies = pickle.load(open(cookies_filepath, 'rb'))
-            sess.cookies = cookies
-        else:
-            #assume a session ID is passed as a parameter
-            sess.headers.update({"cookie": f"mam_id={session}"})
-
-        #test session and cookie (once per run: every request to MAM costs a throttle slot)
+        #test session and cookie (once per run: every request to MAM costs a throttle slot; checkMAMCookie at
+        #start-up already counts)
         global _cookieTestedThisRun
         try:
             if not _cookieTestedThisRun:
@@ -125,10 +125,8 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
                 if r.status_code != 200:
                     raise Exception(f'Error communicating with API. status code {r.status_code} {r.text}')
                 _cookieTestedThisRun = True
-                # save cookies for later
-                with open(cookies_filepath, 'wb') as f:
-                    pickle.dump(sess.cookies, f)
-                    print (f"Cookie updated...")
+                # use (and keep for later runs) the cookie MAM accepted, rotated or not
+                myx_session.accepted(cfg, sess, session, source)
 
             mam_categories = []
             if audiobook:
@@ -229,6 +227,8 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
     return books
 
 def testSessionCookie(mySession, cfg=None):
+    """True when MAM accepts the session's cookie, False when MAM answered and rejected it, None when MAM could not be
+    reached (timeout, DNS, connection error): the cookie itself is then not known to be bad."""
     isSessionCookieValid = False
 
     #test session and cookie
@@ -246,49 +246,41 @@ def testSessionCookie(mySession, cfg=None):
 
     except Exception as e:
         print(f'Checking MAM Cookie {e}')
+        return None
 
     return isSessionCookieValid
 
 def checkMAMCookie(cfg):
-    #Config
-    session = cfg.get("Config/session")
-    log_path = cfg.get("Config/log_path")
+    """Try each session candidate (mousehole file, cookie store, config/env) against MAM until one is accepted; that
+    one is used for the rest of the run. A rejected cookie-store entry is removed, as upstream did with cookies.pkl."""
+    global _cookieTestedThisRun
+    log_path = myx_session.logPath(cfg)
 
-    isCookieValid = False
-    useConfigSession = False
-    cookies_filepath = os.path.join(log_path, 'cookies.pkl')
-    sess = requests.Session()
+    found = myx_session.candidates(cfg)
+    if not found:
+        print ("No MAM session found. Set Config/session (or MAM_SESSION / MAM_SESSION_FILE, or a mousehole state file)."
+               " Please go to MAM Preferences > Security to create a new session")
+        return False
 
-    #Check if a cookie file exists
-    if os.path.exists(cookies_filepath):
-        print (f"Checking if current cookie file is still valid...")
-        #If it does, create a session, using this cookie
-        cookies = pickle.load(open(cookies_filepath, 'rb'))
-        sess.cookies = cookies
-        isCookieValid = testSessionCookie (sess, cfg)
+    for n, (value, source) in enumerate(found):
+        print (f"Checking MAM cookie from the {source}...")
+        sess = requests.Session()
+        myx_session.apply(sess, value)
+        verdict = testSessionCookie (sess, cfg)
+        if verdict:
+            myx_session.accepted(cfg, sess, value, source)
+            _cookieTestedThisRun = True
+            return True
+        if verdict is None:
+            #MAM was not reached: nothing is known about the cookie, so the store is kept for the next run
+            print ("Could not reach MAM to check the cookie; try again later")
+            return False
+        if source == "cookie store":
+            myx_session.clearStore(log_path)
+        more = ", trying the next source..." if n + 1 < len(found) else ""
+        print (f"The MAM cookie from the {source} was rejected{more}")
 
-        #if the session cookie is NOT Valid
-        if (not isCookieValid):
-            #delete the file
-            os.remove(cookies_filepath)
-            
-            print (f"Found an existing cookie file, but it was invalid. Checking session ID from config...")
-            useConfigSession = True
-    else:
-        #Cookie File not found, use the session ID from Config
-        print (f"Cookie file not found, checking session ID from config...")
-        useConfigSession = True
-
-    if (useConfigSession):
-        if (session is not None) and len(session):
-            sess.headers.update({"cookie": f"mam_id={session}"})
-            isCookieValid = testSessionCookie (sess, cfg)
-
-        else:
-            print (f"No session ID found in the config... Please go to MAM Preferences > Security to create a new session")
-        
-
-    return isCookieValid
+    return False
 
 def escape_string(input_string):  
     """Escapes special characters in a string by prefixing them with a backslash.

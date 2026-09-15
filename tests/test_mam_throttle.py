@@ -20,8 +20,9 @@ class FakeSession:
     instances = []
 
     def __init__(self):
+        from requests.cookies import RequestsCookieJar
         self.headers = {}
-        self.cookies = None
+        self.cookies = RequestsCookieJar()
         self.requests = []
         FakeSession.instances.append(self)
 
@@ -36,19 +37,18 @@ class FakeSession:
 
 class MamThrottleTest(unittest.TestCase):
     def setUp(self):
-        self.saved = (myx_mam.requests, myx_mam._sleep, myx_mam._now, myx_mam.pickle)
+        self.saved = (myx_mam.requests, myx_mam._sleep, myx_mam._now)
         self.clock = [1000.0]
         self.sleeps = []
         myx_mam.requests = type("R", (), {"Session": FakeSession})
         myx_mam._sleep = lambda s: (self.sleeps.append(s), self.clock.__setitem__(0, self.clock[0] + s))
         myx_mam._now = lambda: self.clock[0]
-        myx_mam.pickle = type("P", (), {"dump": staticmethod(lambda *a, **k: None), "load": staticmethod(lambda *a, **k: None)})
         myx_mam.resetRunCounters()
         FakeSession.instances = []
         FakeSession.answer = _Resp(200, '{"data": []}', {"data": [], "total": 0, "found": 0, "perpage": 50, "start": 0})
 
     def tearDown(self):
-        myx_mam.requests, myx_mam._sleep, myx_mam._now, myx_mam.pickle = self.saved
+        myx_mam.requests, myx_mam._sleep, myx_mam._now = self.saved
         myx_mam.resetRunCounters()
 
     def search(self, cfg, title):
