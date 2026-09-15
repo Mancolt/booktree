@@ -8,6 +8,7 @@ import mimetypes
 import csv
 import json
 import hashlib
+from xml.sax.saxutils import escape as _xml_escape
 from langcodes import *
 import myx_classes
 
@@ -275,64 +276,87 @@ def getLogHeaders():
                     
     return dict.fromkeys(headers)
 
+# characters that XML 1.0 does not allow anywhere, even escaped (control chars other than tab/LF/CR, surrogates)
+_XML_INVALID_CHARS = re.compile("[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def xmlText(value):
+    """Return value as XML character data: &, <, > escaped and invalid control characters removed.
+
+    Everything that ends up between OPF tags (title, publisher, creator names, ASIN, ...) must go through
+    here; Audiobookshelf rejects the whole metadata.opf on the first bare '&' (e.g. 'Little, Brown & Company')."""
+    return _xml_escape(_XML_INVALID_CHARS.sub("", "" if value is None else str(value)))
+
+
+def xmlAttr(value):
+    """Return value for use inside a quoted XML attribute (both quote styles escaped)."""
+    return _xml_escape(_XML_INVALID_CHARS.sub("", "" if value is None else str(value)), {"'": "&apos;", '"': "&quot;"})
+
+
+def xmlCData(value):
+    """Return value for use inside a CDATA section: a literal ']]>' would terminate the section early."""
+    return _XML_INVALID_CHARS.sub("", "" if value is None else str(value)).replace("]]>", "]]]]><![CDATA[>")
+
+
+_OPF_TOKEN_RE = re.compile("__(AUTHORS|TITLE|SUBTITLE|DESCRIPTION|PUBLISHER|YEAR|NARRATORS|ASIN|SERIES|LANGUAGE|GENRES|TAGS)__")
+
+
+def renderOPF(book):
+    """Render the metadata.opf text for a book from templates/booktemplate.opf (pure: no I/O besides the template)."""
+    opfTemplate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "booktemplate.opf")
+    with open(opfTemplate, mode='r', encoding='utf-8') as file:
+        template = file.read()
+
+    # - Author -
+    authors = ""
+    for author in book.authors:
+        authors += f"\t<dc:creator opf:role='aut'>{xmlText(author.name)}</dc:creator>\n"
+
+    # - Narrator -
+    narrators = ""
+    for narrator in book.narrators:
+        narrators += f"\t<dc:creator opf:role='nrt'>{xmlText(narrator.name)}</dc:creator>\n"
+
+    # - Series -
+    series = ""
+    for s in book.series:
+        series += f"\t<ns0:meta name='calibre:series' content='{xmlAttr(s.name)}' />\n"
+        series += f"\t<ns0:meta name='calibre:series_index' content='{xmlAttr(s.part)}' />\n"
+
+    # - Genres / Tags - (CDATA, as upstream did)
+    genres = ""
+    for g in set(book.genres):
+        genres += f"\t<dc:subject><![CDATA[{xmlCData(g)}]]></dc:subject>\n"
+    tags = ""
+    for t in set(book.tags):
+        tags += f"\t<dc:tag><![CDATA[{xmlCData(t)}]]></dc:tag>\n"
+
+    # All tokens are substituted in ONE pass with a callable replacement: the inserted metadata is never
+    # rescanned, so a value that itself contains a token (an author named "__DESCRIPTION__") cannot pull
+    # another, differently-escaped field into its place; and a backslash sequence in the metadata (e.g.
+    # '\1') is inserted literally instead of being read as a regex group reference, which used to raise
+    # and leave the book with no OPF at all
+    values = {
+        "__AUTHORS__": authors,
+        "__TITLE__": xmlText(book.title),
+        "__SUBTITLE__": xmlText(book.subtitle),
+        "__DESCRIPTION__": xmlCData(book.description),
+        "__PUBLISHER__": xmlText(book.publisher),
+        "__YEAR__": xmlText("" if book.publishYear is None else str(book.publishYear)[0:4]),
+        "__NARRATORS__": narrators,
+        "__ASIN__": xmlText(book.asin),
+        "__SERIES__": series,
+        "__LANGUAGE__": xmlText(book.language),
+        "__GENRES__": genres,
+        "__TAGS__": tags,
+    }
+    return _OPF_TOKEN_RE.sub(lambda m: values[m.group(0)], template)
+
+
 def createOPF(book, path):
     try:
         # --- Generate .opf Metadata file ---
-        opfTemplate=os.path.join(os.getcwd(), "templates/booktemplate.opf") 
-        with open(opfTemplate, mode='r', encoding='utf-8') as file:
-            template = file.read()
-
-        # - Author -
-        authors=""
-        for author in book.authors:
-            authors += f"\t<dc:creator opf:role='aut'>{author.name}</dc:creator>\n"
-        template = re.sub(r"__AUTHORS__", authors, template)
-
-        # - Title -
-        template = re.sub(r"__TITLE__", book.title, template)
-
-        # - Subtitle -
-        template = re.sub(r"__SUBTITLE__", book.subtitle, template)
-
-        # - Description -
-        template = re.sub(r"__DESCRIPTION__", book.description, template)
-
-        # - Publisher -
-        template = re.sub(r"__PUBLISHER__", book.publisher, template)
-
-        # - Year -
-        template = re.sub(r"__YEAR__", book.publishYear[0:4], template)
-
-        # - Narrator -
-        narrators=""
-        for narrator in book.narrators:
-            narrators += f"\t<dc:creator opf:role='nrt'>{narrator.name}</dc:creator>\n"
-        template = re.sub(r"__NARRATORS__", narrators, template)
-
-        # - ASIN -
-        template = re.sub(r"__ASIN__", book.asin, template)
-
-        # - Series -
-        series=""
-        for s in book.series:
-            series += f"\t<ns0:meta name='calibre:series' content='{s.name}' />\n"
-            series += f"\t<ns0:meta name='calibre:series_index' content='{s.part}' />\n"
-        template = re.sub(r"__SERIES__", series, template)
-
-        # - Language -
-        template = re.sub(r"__LANGUAGE__", book.language, template)
-        
-        # - Genres -
-        genres=""
-        for g in set(book.genres):
-            genres += f"\t<dc:subject><![CDATA[{g}]]></dc:subject>\n"
-        template = re.sub(r"__GENRES__", genres, template)
-
-        # - Tags -
-        tags=""
-        for t in set(book.tags):
-            tags += f"\t<dc:tag><![CDATA[{t}]]></dc:tag>\n"
-        template = re.sub(r"__TAGS__", tags, template)
+        template = renderOPF(book)
 
         opfFile=os.path.join(path, "metadata.opf")
         with open(opfFile, mode='w', encoding='utf-8') as file:
