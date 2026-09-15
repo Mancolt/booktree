@@ -9,6 +9,7 @@ import myx_audible
 import myx_utilities
 import myx_mam
 import myx_args
+import myx_hints
 import csv
 import httpx
 
@@ -40,11 +41,12 @@ def buildTreeFromLog(files, logfile, cfg):
                     if (i > 1):
                         f = str(row["file"])
                         fullpath=str(row["file"])
-                        bf=myx_classes.BookFile(f, fullpath, str(row["sourcePath"]), str(row["mediaPath"]), isHardlinked=bool(row["isHardLinked"]))
+                        #the CSV holds the strings "True"/"False": bool("False") is True, so compare the text
+                        bf=myx_classes.BookFile(f, fullpath, str(row["sourcePath"]), str(row["mediaPath"]), isHardlinked=(str(row["isHardLinked"]).lower() == "true"))
                         
                         #parse authors and series
                         bf.ffprobeBook = myx_classes.Book(asin=str(row["id3-asin"]), title=str(row["id3-title"]), subtitle=row["id3-subtitle"], publisher=row["id3-publisher"], length=row["id3-length"], duration=row["id3-duration"], language=row["id3-language"])
-                        bf.isMatched = bool(row["isMatched"])
+                        bf.isMatched = (str(row["isMatched"]).lower() == "true")
                         bf.ffprobeBook.setAuthors(row["id3-authors"])
                         bf.ffprobeBook.setNarrators(row["id3-narrators"])
                         bf.ffprobeBook.setSeries(row["id3-seriesparts"])
@@ -61,6 +63,10 @@ def buildTreeFromLog(files, logfile, cfg):
                             book[hashKey].isMatched = (str(row["isMatched"]).lower() == "true")
                             book[hashKey].files.append(bf)
                             book[hashKey].ffprobeBook = book[hashKey].files[0].ffprobeBook
+                            #an ASIN in the input log is an explicit instruction (fix.csv): authoritative, even
+                            #when the id3 title/author disagree with the Audible product
+                            if myx_hints.isAsin(row["id3-asin"]):
+                                book[hashKey].pinnedAsin = str(row["id3-asin"]).strip().upper()
 
                             if book[hashKey].isMatched:
                                 if book[hashKey].metadata == "audible":
@@ -94,6 +100,7 @@ def buildTreeFromLog(files, logfile, cfg):
 
                     #Search MAM record
                     bf = book[b].files[0]
+                    book[b].applyHints(cfg)
                     
                     #Search Audible using the provided id3 metadata in the input file
                     if (not ebooks):
@@ -251,6 +258,8 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
             normalBooks.append(book[b])            
             #Process these books the same way, essentially based on the first book in the file list
             bf = book[b].files[0]
+            #hints are looked up now that every file of the release is known (a hint may be keyed by any file path)
+            book[b].applyHints(cfg)
 
             #get MAM first, check if it's a foreign book
             isForeignBook = False
@@ -380,6 +389,9 @@ if __name__ == "__main__":
             
             #check metadata source
             metadata = cfg.get("Config/metadata")
+
+            #validate the hints file up front: a silently ignored hint would look like a matching failure
+            myx_hints.getHints(cfg)
 
             if ("mam" in metadata):
                 #check the cookie

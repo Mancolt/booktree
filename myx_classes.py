@@ -13,6 +13,8 @@ from pathvalidate import sanitize_filename
 import myx_utilities
 import myx_audible
 import myx_mam
+import myx_hints
+import copy
 
 #Module variables
 authMode="login"
@@ -417,14 +419,88 @@ class MAMBook:
     isMatched:bool=False
     mamCount:int=-1
     mamIDs:list[str]= field(default_factory=list)
+    pinnedAsin:str=""
+    hint:dict=None
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
         duration:float=0
         for f in self.files:
-            duration += float(f.ffprobeBook.duration)
+            try:
+                duration += float(f.ffprobeBook.duration or 0)
+            except (TypeError, ValueError):
+                pass
 
         return math.floor(duration/60)
+
+    def applyHints(self, cfg):
+        """Attach the --hints entry for this release (by name, release folder path or any file path)."""
+        hint = myx_hints.findHint(myx_hints.getHints(cfg), self.name, [f.fullPath for f in self.files],
+                                  root=self.files[0].sourcePath if self.files else None)
+        if hint:
+            self.hint = hint
+            if hint.get("asin"):
+                self.pinnedAsin = hint["asin"]
+            print(f"Applying hint for {self.name}: {hint}")
+        return hint
+
+    def getExpectedDuration(self):
+        """Expected runtime in minutes: the hint's duration_min, else the files' total duration; 0 if unknown."""
+        if self.hint and self.hint.get("duration_min"):
+            return float(self.hint["duration_min"])
+        return float(self.getRunTimeLength())
+
+    def searchBookFromHint(self, book):
+        """A copy of `book` with the hint's title/authors substituted for the Audible search (the original,
+        which is what gets logged as id3-*, is left untouched)."""
+        if not self.hint or not (self.hint.get("title") or self.hint.get("authors")):
+            return book
+        searchBook = copy.copy(book)
+        if self.hint.get("title"):
+            searchBook.title = self.hint["title"]
+        if self.hint.get("authors"):
+            searchBook.authors = [Contributor(a) for a in self.hint["authors"]]
+        return searchBook
+
+    def acceptPinnedAsin(self, client, cfg, book, language):
+        """Fetch the pinned ASIN and accept it as the match if Audible returns a usable product.
+        Returns the Book or None (caller falls back to the normal search)."""
+        verbose = bool(cfg.get("Config/flags/verbose"))
+        fuzzy_match = cfg.get("Config/fuzzy_match")
+        maxDelta = float(cfg.get("Config/pin_max_runtime_delta_min", 0) or 0)
+        print(f"Using pinned ASIN {self.pinnedAsin} for {self.name}")
+        products = myx_audible.getAudibleBook(client, cfg, asin=self.pinnedAsin, language=language)
+        self.audibleMatches = products or []
+        if verbose:
+            print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
+        refused = False
+        for product in self.audibleMatches:
+            abook = myx_audible.product2Book(product)
+            if not abook.title:
+                print(f"\tIgnoring Audible result {abook.asin} without a title (incomplete catalog entry)")
+                continue
+            #informational score against whatever metadata we have; the pin decides, not the score
+            if book is not None:
+                mine = '|'.join([f"Duration:{self.getRunTimeLength()}min", book.getAuthors(), book.getCleanTitle()])
+                theirs = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle()])
+                abook.matchRate = myx_utilities.fuzzymatch(mine, theirs)[fuzzy_match]
+            delta = myx_hints.durationDelta(self.getExpectedDuration(), abook.length)
+            if delta is not None and not myx_hints.withinTolerance(delta):
+                if maxDelta > 0 and delta > maxDelta:
+                    print(f"\tRefusing pinned ASIN {abook.asin}: runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min (limit {maxDelta:.0f}min)")
+                    refused = True
+                    continue
+                print(f"\tWarning: pinned ASIN runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min")
+            print(f"Pinned ASIN {abook.asin} accepted: {abook.title} by {abook.getAuthors()}")
+            self.bestAudibleMatch = abook
+            return abook
+        #nothing accepted: do not leave the rejected product behind as a "match" in the log
+        self.audibleMatches = []
+        if refused:
+            print(f"Pinned ASIN {self.pinnedAsin} refused on runtime, falling back to search")
+        else:
+            print(f"Pinned ASIN {self.pinnedAsin} returned no usable Audible product, falling back to search")
+        return None
 
     def ffprobe(self, file):
         #ffprobe the file
@@ -483,10 +559,21 @@ class MAMBook:
         fuzzy_match = cfg.get("Config/fuzzy_match")
 
         books=[]
+        searchAsin = book.asin if book is not None else ""
+        if self.pinnedAsin:
+            if self.acceptPinnedAsin(client, cfg, book, book.language if book is not None else "english") is not None:
+                return self.bestAudibleMatch
+            #the pin failed: search by title/author, never by the same ASIN again
+            if str(searchAsin).strip().upper() == self.pinnedAsin:
+                searchAsin = ""
+
+        hintCandidates = list(self.hint.get("candidates", [])) if self.hint else []
+        hintedTitle = bool(self.hint and self.hint.get("title"))
         if (book is not None):
+            book = self.searchBookFromHint(book)
             language=book.language
             # book = self.ffprobeBook
-            if (len(book.title) == 0) or (fixid3):
+            if ((len(book.title) == 0) or (fixid3)) and not hintedTitle:
                 book.title = myx_utilities.getAltTitle (self.name, book, cfg) 
             
             title = myx_utilities.cleanseTitle(book.title, stripUnabridged=True)
@@ -536,10 +623,16 @@ class MAMBook:
             #     #book found, exit for loop
             #     if ((books is not None) and len(books)):
             #         break
-            if add_narrators:
-                books=myx_audible.getAudibleBook (client, cfg, asin=book.asin, title=title, authors=authors, narrators=narrators, keywords=keywords, language=language)
+            if hintCandidates:
+                #caller-supplied candidates: fetched by ASIN, ranked below by duration then fuzzy score
+                print(f"Fetching {len(hintCandidates)} hinted candidate ASIN(s) for {self.name}")
+                books=[]
+                for candidate in hintCandidates:
+                    books.extend(myx_audible.getAudibleBook (client, cfg, asin=candidate, language=language) or [])
+            elif add_narrators:
+                books=myx_audible.getAudibleBook (client, cfg, asin=searchAsin, title=title, authors=authors, narrators=narrators, keywords=keywords, language=language)
             else:
-                books=myx_audible.getAudibleBook (client, cfg, asin=book.asin, title=title, authors=authors, keywords=keywords, language=language)
+                books=myx_audible.getAudibleBook (client, cfg, asin=searchAsin, title=title, authors=authors, keywords=keywords, language=language)
                 
             #too constraining?  try just a keywords search with all information
             # if ((books is None) or ((books is not None) and (len(books) == 0))):
@@ -588,14 +681,21 @@ class MAMBook:
 
                 else:
                     bestMatchRate=0
+                    expectedDuration = self.getExpectedDuration()
+                    scored = []
                     #find the best match
                     print(f"Finding the best Audible match out of {len(books)} results")
                     for product in books:
                         abook=myx_audible.product2Book(product)
+                        if not abook.title:
+                            #Audible answers some ASIN lookups with a skeleton {asin, asset_details, is_vvab}: not a match
+                            print (f"\tIgnoring Audible result {abook.asin} without a title (incomplete catalog entry)")
+                            continue
                         #the author is known, check if this book is this authors book
                         #otherwise, if maybe this title is close enough
                         #print (f"{abook.title} by {abook.authors}...")
-                        if len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg):
+                        if hintCandidates or (len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)):
+                            #hinted candidates were chosen by the caller: no title/author gate
                             audibleBook = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
                             if add_narrators:
                                 audibleBook = '|'.join([audibleBook, abook.getNarrators()])
@@ -613,9 +713,21 @@ class MAMBook:
 
                         print(f"\tMatch Rate: {matchRate}\n\tSearch: {mamBook}\n\tResult: {audibleBook}\n\tBest Match Rate: {bestMatchRate}\n")
                         
+                        delta = myx_hints.durationDelta(expectedDuration, abook.length)
+                        if delta is not None:
+                            print(f"\tDuration: {abook.length}min vs expected {expectedDuration:.0f}min (difference {delta:.0f}min)")
+                        scored.append((abook, matchRate[fuzzy_match], delta))
                         if (matchRate[fuzzy_match] > bestMatchRate) and (matchRate[fuzzy_match] >= minMatchRate):
                             bestMatchRate=matchRate[fuzzy_match]
-                            self.bestAudibleMatch=abook
+
+                    best = myx_hints.pickBest(scored, minMatchRate, requireRate=not hintCandidates)
+                    if best is not None:
+                        abook, rate, delta = best
+                        if myx_hints.withinTolerance(delta) and rate < bestMatchRate:
+                            print(f"\tDuration match preferred: {abook.title} ({abook.length}min is within {myx_hints.DURATION_TOLERANCE_MIN}min of {expectedDuration:.0f}min, score {rate})")
+                        elif hintCandidates and rate < minMatchRate:
+                            print(f"\tHinted candidate accepted on duration: {abook.title} ({abook.length}min vs {expectedDuration:.0f}min, score {rate})")
+                        self.bestAudibleMatch=abook
         #end if
 
         #pprint(self.bestAudibleMatch)

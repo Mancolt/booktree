@@ -5,7 +5,22 @@ point is tag `upstream-baseline`.
 
 ## Unreleased
 
+### Added
+- `--hints <json>` (or `Config/hints_file`): per-release pinned ASIN, candidate ASINs, expected duration and
+  search title/authors, keyed by release folder, file name or path. See CONFIG.md.
+- Duration as evidence: among acceptable Audible results, one whose runtime is within 2 minutes of the files'
+  total duration (or the hint's `duration_min`) is preferred over a higher fuzzy score with the wrong runtime;
+  equal scores prefer the closer runtime.
+- `Config/pin_max_runtime_delta_min`: optional hard limit on the runtime mismatch of a pinned ASIN (default off).
+
 ### Fixed
+- In `log` mode an explicit `id3-asin` (fix.csv) is authoritative: the Audible product for that ASIN is accepted
+  even when the id3 title/author disagree, instead of being vetoed by the title/author comparison.
+- Audible answers some per-ASIN lookups with a skeleton `{asin, asset_details, is_vvab}` and no title. These are
+  now skipped instead of being compared against empty strings and rejected (upstream issue #25).
+- A release whose files report no duration no longer raises in the runtime calculation.
+- Author and series names are escaped before being used as regular expressions when deriving an alternative
+  title; a name such as `Brad [` (from a tag or a hint) used to abort the run, and a crafted one could hang it.
 - `metadata.opf` is now well-formed XML for any metadata: `&`, `<`, `>` and quotes are escaped in every text node
   and attribute, CDATA sections survive a literal `]]>`, characters XML forbids are stripped, and a backslash in a
   description no longer aborts OPF generation. Audiobookshelf used to discard the whole file, ASIN included, on
