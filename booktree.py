@@ -11,6 +11,8 @@ import myx_mam
 import myx_args
 import myx_hints
 import myx_jsonlog
+import myx_library
+import myx_notify
 import csv
 import httpx
 
@@ -126,7 +128,7 @@ def buildTreeFromLog(files, logfile, cfg):
         # #Create Hardlinks
         print (f"\nCreating Hardlinks for {len(matchedFiles)} matched books")
         for mb in matchedFiles:
-            mb.createHardLinks(cfg)       
+            hardlinkUnlessFiled(mb, cfg)
 
             #cache this book - unless it's a dry run
             if (not dryRun):
@@ -187,12 +189,13 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     #Let's assume that all books are folders, so a file has a parent folder
     print (f"Scanning {len(allFiles)} downloaded since {datetime.fromtimestamp(last_run)}, please wait...")
     #print(f"\nCategorizing books from {len(allFiles)} files, please wait...\n")
+    hints = myx_hints.getHints(cfg) if last_run else {}
     for f in allFiles:
-        #only process files downloaded after last_scan
+        #only process files downloaded after last_scan, unless the operator asked for this release (--refresh/--pin)
         
         #check the last modtime of this file
         fullpath = os.path.join(path, f)
-        if os.path.getmtime(fullpath) > last_run:        
+        if os.path.getmtime(fullpath) > last_run or refreshRequested(hints, fullpath, path):
             #for each book file
             #print(f"Categorizing: {f}")
 
@@ -335,7 +338,7 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     #Create Hardlinks
     print (f"\nCreating Hardlinks for {len(matchedFiles)} matched books\n")
     for mb in matchedFiles:
-        mb.createHardLinks(cfg)
+        hardlinkUnlessFiled(mb, cfg)
         #cache this book - unless it's a dry run
         if (not dryRun):
             mb.cacheMe("book", str(book[b]), cfg)
@@ -367,10 +370,62 @@ def jsonLogPath(cfg, logfile):
     return os.path.splitext(logfile)[0] + ".jsonl"
 
 
+#Totals over every Config/paths entry of this run, for the end-of-run notification and the ABS scan trigger.
+RUN_SUMMARY = {"books": 0, "matched": 0, "unmatched": 0, "hardlinked_files": 0, "unmatched_names": [], "csv": None,
+               "dry_run": False, "error": None}
+
+
+def noteRunTotals(cfg, logfile, books, matched):
+    RUN_SUMMARY["books"] += len(books)
+    RUN_SUMMARY["matched"] += len(matched)
+    RUN_SUMMARY["unmatched"] += len(books) - len(matched)
+    RUN_SUMMARY["hardlinked_files"] += sum(1 for b in books for f in b.files if f.isHardlinked)
+    matchedIds = {id(b) for b in matched}
+    RUN_SUMMARY["unmatched_names"].extend(str(getattr(b, "name", b)) for b in books if id(b) not in matchedIds)
+    RUN_SUMMARY["csv"] = logfile
+    RUN_SUMMARY["dry_run"] = bool(cfg.get("Config/flags/dry_run"))
+
+
+def refreshRequested(hints, fullpath, root):
+    """True when a --refresh/--pin hint names this file, its release folder or a path covering it: such a release
+    is processed even when it is older than Config/last_scan (the operator is asking for it now)."""
+    if not hints:
+        return False
+    for name in (os.path.basename(fullpath), os.path.basename(os.path.dirname(fullpath))):
+        hint = myx_hints.findHint(hints, name, [fullpath], root)
+        if hint and hint.get("refresh"):
+            return True
+    return False
+
+
+def hardlinkUnlessFiled(mb, cfg):
+    """Create the book's hardlinks (and OPF) unless Config/dedupe_roots says the same files are already filed in a
+    library; then the book is only reported. A release the operator asked for (--refresh/--pin) is always filed:
+    the copy already in the library is most likely the wrong match being corrected. Returns True when hardlinks were
+    attempted."""
+    folder = None
+    if not getattr(mb, "refresh", False):
+        try:
+            folder = myx_library.alreadyFiled(cfg, [f.fullPath for f in mb.files])
+        except Exception as e:              # noqa: BLE001 - dedupe is a convenience; never block the hardlinks over it
+            print(f"Dedupe check skipped for {mb.name}: {type(e).__name__}")
+    if folder:
+        mb.alreadyFiled = folder
+        mb.selectMetadataBook()             # the CSV `paths` column is computed from it, hardlinked or not
+        print(f"Already in the library at {folder}; not hardlinking {mb.name}")
+        return False
+    mb.createHardLinks(cfg)
+    return True
+
+
 def writeJsonLog(cfg, logfile, books, matched):
     """Additive: the JSON log must never change the outcome of a run, so any failure here is reported, not raised."""
     myx_jsonlog.end()
     myx_hints.warnUnusedRefresh(cfg)
+    try:
+        noteRunTotals(cfg, logfile, books, matched)
+    except Exception as e:                  # noqa: BLE001 - the summary feeds notifications only
+        print(f"Run totals could not be updated: {type(e).__name__}")
     path = jsonLogPath(cfg, logfile)
     if not path:
         return
@@ -461,41 +516,74 @@ def run():
         print(f"\nThere was a problem reading your config file {myx_args.params.config_file}: {e}\n")
         return EXIT_USAGE
 
+    #from here on the operator can be told how the run ended (Config/notify), whatever the outcome
+    try:
+        code = runWithConfig(cfg)
+    except KeyboardInterrupt:
+        writeFailureRecord(cfg, EXIT_INTERRUPTED, "interrupted")
+        finish(cfg, EXIT_INTERRUPTED, "interrupted")
+        raise
+    except Exception as e:
+        writeFailureRecord(cfg, EXIT_ERROR, f"{type(e).__name__}: {e}")
+        finish(cfg, EXIT_ERROR, f"{type(e).__name__}: {e}")
+        raise
+    finish(cfg, code)
+    return code
+
+
+def finish(cfg, code, error=None):
+    """After the last path: ask Audiobookshelf to scan when hardlinks were made, then notify. Best effort."""
+    if error:
+        RUN_SUMMARY["error"] = error
+    try:
+        if code == EXIT_OK:
+            myx_library.triggerAbsScan(cfg, RUN_SUMMARY["hardlinked_files"], RUN_SUMMARY["dry_run"], RUN_SUMMARY["matched"])
+        myx_notify.send(cfg, RUN_SUMMARY, code)
+    except Exception as e:                  # noqa: BLE001 - never change the exit code over a notification
+        print(f"Post-run steps skipped: {type(e).__name__}")
+
+
+def usageError(message):
+    RUN_SUMMARY["error"] = message.strip().splitlines()[0] if message.strip() else "configuration error"
+    print(message)
+    return EXIT_USAGE
+
+
+def runWithConfig(cfg):
+    """Validate the loaded configuration and process every path; returns the exit code."""
     #check metadata source
     metadata = str(cfg.get("Config/metadata") or "")
 
-    #validate the hints file up front: a silently ignored hint would look like a matching failure
+    #validate the hints file and pins up front: a silently ignored hint would look like a matching failure
     try:
         myx_hints.getHints(cfg)
     except (myx_hints.HintsError, ValueError, OSError) as e:
         #HintsError and JSONDecodeError are both ValueErrors; an unreadable or malformed file is a usage error too
-        print(f"\nCould not use the hints file: {e}\n")
-        return EXIT_USAGE
+        return usageError(f"\nCould not use the hints: {e}\n")
 
     #each Config/paths entry must be an object with the three keys main() reads
     entries = cfg.get("Config/paths")
     if not isinstance(entries, list) or not entries or any(
         not isinstance(p, dict) or not {"files", "source_path", "media_path"} <= set(p) for p in entries
     ):
-        print("\nConfig/paths must be a non-empty list of objects with files, source_path and media_path. Please check and try again!\n")
-        return EXIT_USAGE
+        return usageError("\nConfig/paths must be a non-empty list of objects with files, source_path and media_path. Please check and try again!\n")
+
+    #optional integrations: a typo here would silently mute alerts or skip the scan, so it is checked before the run
+    for problem in (myx_notify.validate(cfg), myx_library.validateAbs(cfg), myx_library.validateDedupeRoots(cfg)):
+        if problem:
+            return usageError(f"\n{problem}\n")
 
     if ("mam" in metadata):
         #check the cookie
         print ("Checking MAM cookie")
         if not myx_mam.checkMAMCookie(cfg):
-            print ("\nYour MAM cookie is not valid... please check your session and rerun booktree\n")
-            return EXIT_USAGE
+            return usageError("\nYour MAM cookie is not valid... please check your session and rerun booktree\n")
 
     #start the program
-    try:
-        return main(cfg)
-    except KeyboardInterrupt:
-        writeFailureRecord(cfg, EXIT_INTERRUPTED, "interrupted")
-        raise
-    except Exception as e:
-        writeFailureRecord(cfg, EXIT_ERROR, f"{type(e).__name__}: {e}")
-        raise
+    code = main(cfg)
+    if code != EXIT_OK and not RUN_SUMMARY["error"]:
+        RUN_SUMMARY["error"] = "a configured path could not be processed"
+    return code
 
 
 if __name__ == "__main__":

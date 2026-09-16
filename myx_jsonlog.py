@@ -103,6 +103,7 @@ def record(book, cfg, run_id):
         "runtime_delta_min": delta,
         "target_path": target,
         "hardlinked": bool(files) and all(f["hardlinked"] for f in files),
+        "already_filed": getattr(book, "alreadyFiled", None) or None,       # Config/dedupe_roots: folder that holds the same files
         "mam_count": len(book.mamMatches or []),
         "audible_count": len(book.audibleMatches or []),
         "queries": getattr(book, "queries", []) or [],

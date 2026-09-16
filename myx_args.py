@@ -25,6 +25,7 @@ def importArgs():
     parser.add_argument("--refresh", action="append", default=None, metavar="RELEASE", help="Re-process this release (folder/file name or path) ignoring cached search results and the processed marker; repeatable")
     parser.add_argument("--json-log", nargs="?", const=True, default=None, metavar="PATH", help="Also write a JSON-lines run log (default: next to the CSV as booktree_log_<timestamp>.jsonl). Give the path as --json-log=PATH or put the option after the config file")
     parser.add_argument("--hints", default=None, metavar="JSON", help="Per-release hints (pinned ASIN, candidate ASINs, expected duration, search title/authors) keyed by release folder, file name or path; see CONFIG.md")
+    parser.add_argument("--pin", action="append", default=None, metavar="RELEASE=ASIN", help="Use this Audible ASIN for the release (folder/file name or path) and re-process it now, ignoring cached results and the processed marker; repeatable. Shorthand for a hints file with {\"asin\": ..., \"refresh\": true}")
 
     # #you want a specific file or pattern
     # parser.add_argument("--file", default="", help="The file or files(s) you want to process.  Accepts * and ?. Defaults to *.m4b/*.mp3")
@@ -124,6 +125,8 @@ class Config(object):
 
                 if getattr(params, "refresh", None):
                     cfg["Config"]["refresh"] = list(params.refresh)
+                if getattr(params, "pin", None):
+                    cfg["Config"]["pins"] = list(params.pin)
 
                 if getattr(params, "json_log", None) is not None:
                     cfg["Config"]["json_log"] = params.json_log

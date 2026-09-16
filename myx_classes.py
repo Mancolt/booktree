@@ -857,6 +857,17 @@ class MAMBook:
         else: 
             return None
         
+    def selectMetadataBook(self):
+        """The record the target path and OPF are built from: the Audible match, the MAM match or the file's own tags,
+        by the metadata source that produced the match."""
+        if (self.metadata == "audible"):
+            self.metadataBook=self.bestAudibleMatch
+        elif (self.metadata == "mam"):
+            self.metadataBook=self.bestMAMMatch
+        else:
+            self.metadataBook=self.ffprobeBook
+        return self.metadataBook
+
     def createHardLinks(self, cfg):
         #Config variables
         dryRun = bool (cfg.get("Config/flags/dry_run"))
@@ -868,12 +879,7 @@ class MAMBook:
 
         metadata = cfg.get("Config/metadata")
 
-        if (self.metadata == "audible"):
-            self.metadataBook=self.bestAudibleMatch
-        elif (self.metadata == "mam"):
-            self.metadataBook=self.bestMAMMatch
-        else:
-            self.metadataBook=self.ffprobeBook
+        self.selectMetadataBook()
 
         if (self.metadataBook is not None):
             if (dryRun):

@@ -67,6 +67,23 @@ options:
 booktree exits 0 when every configured path was processed, 2 for a configuration or input problem, 1 for an
 unhandled error ([CONFIG.md](CONFIG.md#exit-codes)).
 
+### Running unattended
+
+For a download-client hook or a timer, booktree itself can do what a wrapper script otherwise does (all off until
+configured, see [CONFIG.md](CONFIG.md#after-the-run-notifications-audiobookshelf-scan-dedupe)):
+
+* `notify`: post the run summary (matched/unmatched counts, the unmatched releases, the log path) to an
+  [ntfy](https://ntfy.sh) topic, always or only when something needs attention, and ping a heartbeat URL after a
+  clean run;
+* `abs`: ask Audiobookshelf to scan the library when new hardlinks were made;
+* `dedupe_roots`: do not hardlink a book whose files are already filed in a listed library.
+
+When a book matched the wrong product, or none, fix it in one line instead of editing the log:
+
+~~~
+booktree.py /Config/config.json --pin "Author - Title=B0C5Q9XJ1K"
+~~~
+
 ### Recommended Workflow
 
 1. Start small (pick a folder that has a handful of books, don't run it on 2K files the first try :) )

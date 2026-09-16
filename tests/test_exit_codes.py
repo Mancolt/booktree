@@ -106,11 +106,42 @@ class ExitCodeTest(unittest.TestCase):
             fh.write("{not json")
         r = run_booktree(self.config(), "--hints", hints)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("Could not use the hints file", r.stdout)
+        self.assertIn("Could not use the hints", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
         r = run_booktree(self.config(), "--hints", self.td.name)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertNotIn("Traceback", r.stderr)
+
+    def test_bad_pin_and_bad_integration_settings_exit_2(self):
+        r = run_booktree(self.config(), "--pin", "Some Book=notanasin")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("is not an ASIN", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        for over, text in (({"Config/notify/on": "sometimes", "Config/notify/ntfy_url": "https://ntfy.example/t"}, "Config/notify/on"),
+                           ({"Config/abs/url": "http://abs.example"}, "library_id is required"),
+                           ({"Config/dedupe_roots": [self.src]}, "contains the source path")):
+            r = run_booktree(self.config(**over))
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn(text, r.stdout)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_dead_notification_endpoints_do_not_change_the_exit_code(self):
+        r = run_booktree(self.config(**{"Config/notify/ntfy_url": "http://127.0.0.1:9/topic", "Config/notify/on": "always",
+                                        "Config/notify/heartbeat_url": "http://127.0.0.1:9/hb"}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Notification could not be sent: ConnectionError", r.stdout)
+        self.assertIn("Heartbeat could not be sent: ConnectionError", r.stdout)
+        self.assertNotIn("127.0.0.1:9", r.stdout)
+        # a failure after the config is loaded is notified as such, exit code intact
+        r = run_booktree(self.config(**{"Config/notify/ntfy_url": "http://127.0.0.1:9/topic", "Config/notify/on": "failure",
+                                        "Config/paths": [{"files": 123, "source_path": self.src, "media_path": self.media}]}))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Notification could not be sent", r.stdout)
+
+    def test_unused_pin_is_reported_and_the_run_still_exits_0(self):
+        r = run_booktree(self.config(), "--pin", "Not There=B0C5Q9XJ1K")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("--pin 'Not There' matched no release", r.stdout)
 
     def test_no_mam_session_exits_2(self):
         r = run_booktree(self.config(**{"Config/metadata": "mam-audible"}), env_extra={"MAM_SESSION": "", "MAM_SESSION_FILE": ""})
