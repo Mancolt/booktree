@@ -422,6 +422,7 @@ class MAMBook:
     mamIDs:list[str]= field(default_factory=list)
     pinnedAsin:str=""
     hint:dict=None
+    hintKey:str=None
     parsedName:dict=None
     refresh:bool=False
     matchAttempt:str=""
@@ -439,10 +440,13 @@ class MAMBook:
 
     def applyHints(self, cfg):
         """Attach the --hints entry for this release (by name, release folder path or any file path)."""
-        hint = myx_hints.findHint(myx_hints.getHints(cfg), self.name, [f.fullPath for f in self.files],
-                                  root=self.files[0].sourcePath if self.files else None)
+        hints = myx_hints.getHints(cfg)
+        key = myx_hints.findHintKey(hints, self.name, [f.fullPath for f in self.files],
+                                    root=self.files[0].sourcePath if self.files else None)
+        hint = None if key is None else myx_hints.findHint(hints, key)
         if hint:
             self.hint = hint
+            self.hintKey = key
             if hint.get("asin"):
                 self.pinnedAsin = hint["asin"]
             if hint.get("refresh"):
@@ -546,6 +550,7 @@ class MAMBook:
                     continue
                 print(f"\tWarning: pinned ASIN runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min")
             print(f"Pinned ASIN {abook.asin} accepted: {abook.title} by {abook.getAuthors()}")
+            myx_hints.notePinAccepted(self.hintKey, abook.asin)
             self.bestAudibleMatch = abook
             self.matchAttempt = "pinned"
             return abook

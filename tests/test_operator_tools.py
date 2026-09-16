@@ -42,6 +42,7 @@ class PinTest(unittest.TestCase):
     def setUp(self):
         myx_hints._cache.clear()
         myx_hints._appliedRefresh.clear()
+        myx_hints._acceptedPins.clear()
         self.td = tempfile.TemporaryDirectory()
 
     def tearDown(self):
@@ -70,6 +71,113 @@ class PinTest(unittest.TestCase):
         for bad in (["NoEquals"], ["=B000000001"], ["Rel=notanasin"], ["Rel=" + ASIN, "Rel=B000000002"]):
             with self.assertRaises(myx_hints.HintsError, msg=bad):
                 myx_hints.getHints(FakeConfig(self.td.name, **{"Config/pins": bad}))
+
+    def test_remember_writes_applied_pins_into_the_hints_file_without_refresh(self):
+        path = os.path.join(self.td.name, "hints.json")
+        with open(path, "w") as fh:
+            json.dump({"Other": {"duration_min": 300}, "Rel": {"candidates": ["B000000009"], "refresh": True},
+                       "/data/x/": {"title": "Old"}}, fh)
+        cfg = FakeConfig(self.td.name, **{"Config/hints_file": path, "Config/remember_pins": True,
+                                          "Config/pins": ["Rel=" + ASIN, "/data/x=B000000002", "Typo=B000000003"]})
+        self.assertIsNone(myx_hints.validateRemember(cfg))
+        with contextlib.redirect_stdout(io.StringIO()):
+            hints = myx_hints.getHints(cfg)
+            myx_hints.findHint(hints, "Rel")                                   # matched a release
+            key = myx_hints.findHintKey(hints, "Rel2", ["/data/x/f.m4b"], "/data")   # matched by path
+            self.assertEqual(key, "/data/x")
+            myx_hints.findHint(hints, key)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(myx_hints.rememberPins(cfg), 0)                  # matched, but Audible never accepted the ASIN
+        self.assertIn("Not remembering --pin 'Rel': Audible did not return a usable product for " + ASIN, out.getvalue())
+        myx_hints.notePinAccepted("Rel", ASIN.lower())
+        myx_hints.notePinAccepted("/data/x", "B000000002")
+        myx_hints.notePinAccepted(None, "B000000009")                          # a hint-less book: ignored
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(myx_hints.rememberPins(cfg), 2)
+        self.assertIn("Remembered 2 pin(s)", out.getvalue())
+        self.assertNotIn("Not remembering", out.getvalue())
+        with open(path) as fh:
+            data = json.load(fh)
+        self.assertEqual(data["Rel"], {"candidates": ["B000000009"], "asin": ASIN})   # fields kept, refresh dropped
+        self.assertEqual(data["/data/x/"], {"title": "Old", "asin": "B000000002"})    # existing key updated, not twinned
+        self.assertEqual(data["Other"], {"duration_min": 300})
+        self.assertNotIn("Typo", data)                                                # unmatched pin is not remembered
+        self.assertEqual([f for f in os.listdir(self.td.name) if f.endswith(".tmp")], [])
+        # idempotent: a second run with the same pins writes nothing
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(myx_hints.rememberPins(cfg), 0)
+        self.assertEqual(out.getvalue(), "")
+        # the remembered file is valid input for the next run and no longer re-processes the book
+        myx_hints._cache.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            nxt = myx_hints.getHints(FakeConfig(self.td.name, **{"Config/hints_file": path}))
+        self.assertEqual(nxt["Rel"], {"asin": ASIN, "candidates": ["B000000009"]})
+
+    def test_remember_needs_an_existing_file_follows_symlinks_and_is_off_without_pins(self):
+        path = os.path.join(self.td.name, "new", "hints.json")
+        os.makedirs(os.path.dirname(path))
+        cfg = FakeConfig(self.td.name, **{"Config/hints_file": path, "Config/remember_pins": True, "Config/pins": ["Rel=" + ASIN]})
+        with self.assertRaises(myx_hints.HintsError):
+            myx_hints.getHints(cfg)                                           # a configured file must exist to be loaded
+        myx_hints._cache.clear()
+        cfg.data["Config"]["hints_file"] = path
+        with open(path, "w") as fh:
+            fh.write("{}")
+        with contextlib.redirect_stdout(io.StringIO()):
+            myx_hints.findHint(myx_hints.getHints(cfg), "Rel")
+            myx_hints.notePinAccepted("Rel", ASIN)
+            self.assertEqual(myx_hints.rememberPins(cfg), 1)
+        with open(path) as fh:
+            self.assertEqual(json.load(fh), {"Rel": {"asin": ASIN}})
+        # a symlinked hints file: the target is updated and the link survives
+        link = os.path.join(self.td.name, "link.json")
+        os.symlink(path, link)
+        cfg = FakeConfig(self.td.name, **{"Config/hints_file": link, "Config/remember_pins": True, "Config/pins": ["Rel=B000000005"]})
+        myx_hints.notePinAccepted("Rel", "B000000005")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(myx_hints.rememberPins(cfg), 1)
+        self.assertTrue(os.path.islink(link))
+        with open(path) as fh:
+            self.assertEqual(json.load(fh), {"Rel": {"asin": "B000000005"}})
+        self.assertEqual(myx_hints.rememberPins(FakeConfig(self.td.name, **{"Config/hints_file": path, "Config/remember_pins": True})), 0)
+        self.assertIsNone(myx_hints.validateRemember(FakeConfig(self.td.name, **{"Config/remember_pins": True})))   # no pins: nothing to check
+
+    def test_dry_run_and_a_failed_write_leave_the_file_alone_and_never_raise(self):
+        path = os.path.join(self.td.name, "hints.json")
+        with open(path, "w") as fh:
+            fh.write("{}\n")
+        base = {"Config/hints_file": path, "Config/remember_pins": True, "Config/pins": ["Rel=" + ASIN]}
+        myx_hints.notePinAccepted("Rel", ASIN)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(myx_hints.rememberPins(FakeConfig(self.td.name, **{**base, "Config/flags/dry_run": True})), 0)
+        self.assertIn("[Dry Run] : would remember 1 pin(s)", out.getvalue())
+        with open(path) as fh:
+            self.assertEqual(fh.read(), "{}\n")
+        saved = myx_hints.tempfile.mkstemp
+        myx_hints.tempfile.mkstemp = lambda **kw: (_ for _ in ()).throw(PermissionError("read-only"))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(myx_hints.rememberPins(FakeConfig(self.td.name, **base)), 0)
+        finally:
+            myx_hints.tempfile.mkstemp = saved
+        self.assertIn("Could not remember pins in", out.getvalue())
+        self.assertIn("PermissionError", out.getvalue())
+        with open(path) as fh:
+            self.assertEqual(fh.read(), "{}\n")
+
+    def test_remember_validation(self):
+        cfg = FakeConfig(self.td.name, **{"Config/remember_pins": True, "Config/pins": ["Rel=" + ASIN]})
+        self.assertIn("needs a hints file", myx_hints.validateRemember(cfg))
+        cfg.data["Config"]["hints_file"] = self.td.name
+        self.assertIn("is not a regular file", myx_hints.validateRemember(cfg))
+        bad = os.path.join(self.td.name, "bad.json")
+        with open(bad, "w") as fh:
+            fh.write("{not json")
+        cfg.data["Config"]["hints_file"] = bad
+        with self.assertRaises(ValueError):
+            myx_hints.validateRemember(cfg)                                   # never rewrite a file we cannot read back
+        with open(bad) as fh:
+            self.assertEqual(fh.read(), "{not json")
 
     def test_unused_pin_is_reported_after_the_run(self):
         cfg = FakeConfig(self.td.name, **{"Config/pins": ["Missing Release=" + ASIN, "Found=" + ASIN]})

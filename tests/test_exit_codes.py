@@ -138,6 +138,19 @@ class ExitCodeTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("Notification could not be sent", r.stdout)
 
+    def test_remember_without_a_hints_file_exits_2_and_with_one_leaves_it_untouched_when_nothing_matched(self):
+        r = run_booktree(self.config(), "--pin", "Not There=B0C5Q9XJ1K", "--remember")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("--remember needs a hints file", r.stdout)
+        hints = os.path.join(self.td.name, "hints.json")
+        with open(hints, "w") as fh:
+            fh.write('{"Other": {"asin": "B000000001"}}')
+        r = run_booktree(self.config(), "--hints", hints, "--pin", "Not There=B0C5Q9XJ1K", "--remember")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("matched no release", r.stdout)
+        with open(hints) as fh:
+            self.assertEqual(json.load(fh), {"Other": {"asin": "B000000001"}})
+
     def test_unused_pin_is_reported_and_the_run_still_exits_0(self):
         r = run_booktree(self.config(), "--pin", "Not There=B0C5Q9XJ1K")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

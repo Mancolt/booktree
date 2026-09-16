@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import tempfile
 
 ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 MAX_CANDIDATES = 10
@@ -105,6 +106,8 @@ def normalizeHint(raw, where="hint"):
 def loadHintsFile(path):
     """Parse a hints file into {key: hint}. Raises HintsError on any structural problem (fail loudly: a
     silently ignored hint would look like a matching failure)."""
+    if os.path.exists(path) and not os.path.isfile(path):
+        raise HintsError(f"{path}: not a regular file")             # a FIFO here would block open() forever
     if os.path.getsize(path) > MAX_FILE_BYTES:
         raise HintsError(f"{path}: larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB")
     with open(path, encoding="utf-8") as fh:
@@ -179,10 +182,111 @@ def getHints(cfg):
 
 
 _appliedRefresh = set()
+_acceptedPins = {}              # hint key -> ASIN, for pins whose Audible product was actually accepted this run
 
 
 def noteRefreshApplied(hintKey):
     _appliedRefresh.add(hintKey)
+
+
+def notePinAccepted(hintKey, asin):
+    """Called when a pinned ASIN's Audible product was accepted as the match; only such pins are remembered."""
+    if hintKey:
+        _acceptedPins[hintKey] = str(asin).strip().upper()
+
+
+def rememberEnabled(cfg):
+    return bool(cfg.get("Config/remember_pins")) and bool(_names(cfg.get("Config/pins")))
+
+
+def validateRemember(cfg):
+    """A problem with --remember worth stopping for before the run, or None: it needs a hints file path, and an
+    existing file must be one we can read back (rewriting a file we cannot parse would destroy it)."""
+    if not rememberEnabled(cfg):
+        return None
+    path = cfg.get("Config/hints_file")
+    if not path:
+        return "--remember needs a hints file to write to: set Config/hints_file or pass --hints PATH"
+    if os.path.exists(path) and not os.path.isfile(path):
+        return f"--remember: {path} is not a regular file"
+    if os.path.exists(path):
+        loadHintsFile(path)             # raises HintsError / ValueError / OSError, reported by the caller (getHints has usually
+    return None                         # already parsed it; this keeps the guarantee when validateRemember is called on its own)
+
+
+def rememberPins(cfg):
+    """After the run: write every pin whose Audible product was accepted for a release into the hints file as
+    {"asin": ASIN} (no `refresh`: the correction must apply, not re-process the book on every run). A pin that
+    matched a release but whose ASIN Audible did not return is not remembered: the processed marker would then hide
+    the still-wrong book behind a hint that looks like a saved correction. Other entries and other fields of the
+    same entry are kept; the file is rewritten atomically. Returns the number of pins written; never raises."""
+    if not rememberEnabled(cfg):
+        return 0
+    path = str(cfg.get("Config/hints_file") or "")
+    try:
+        pins = {}
+        for k, a in parsePins(cfg.get("Config/pins")).items():
+            if _acceptedPins.get(k) == a:
+                pins[k] = a
+            elif k in _appliedRefresh:
+                print(f"Not remembering --pin {k!r}: Audible did not return a usable product for {a}")
+        if not path or not pins:
+            return 0
+        if cfg.get("Config/flags/dry_run"):
+            print(f"[Dry Run] : would remember {len(pins)} pin(s) in {path}")
+            return 0
+        path = os.path.realpath(path)       # a symlinked hints file: update the target, do not replace the link
+        data = {}
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                print(f"Not remembering pins: {path} is not a JSON object")
+                return 0
+        # match existing keys the way loadHintsFile normalises them, so a pin updates its entry instead of adding a twin
+        existing = {(os.path.normpath(k) if k.startswith("/") else k): k for k in data if isinstance(k, str)}
+        written = 0
+        for key, asin in pins.items():
+            entry_key = existing.get(key, key)
+            entry = data.get(entry_key)
+            if not isinstance(entry, dict):
+                entry = {}
+            if entry.get("asin") == asin and "refresh" not in entry:
+                continue
+            entry["asin"] = asin
+            entry.pop("refresh", None)
+            data[entry_key] = entry
+            written += 1
+        if not written:
+            return 0
+        for k, v in data.items():                                   # never write what we cannot read back
+            normalizeHint(v, f"{path}[{k!r}]")
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+                if os.path.exists(path):
+                    st = os.stat(path)
+                    for keep in (lambda: os.fchmod(fd, st.st_mode & 0o777),          # keep the operator's mode and owner (root runs
+                                 lambda: os.fchown(fd, st.st_uid, st.st_gid)):      # must not leave a hand-edited file root-owned)
+                        try:
+                            keep()
+                        except OSError:
+                            pass                        # network mounts refuse chmod, non-root cannot chown: a lost bit beats a lost correction
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        print(f"Remembered {written} pin(s) in {path}")
+        return written
+    except Exception as e:                  # noqa: BLE001 - a failed write must not change the outcome of the run
+        print(f"Could not remember pins in {path}: {type(e).__name__}: {e}")
+        return 0
 
 
 def warnUnusedRefresh(cfg):
@@ -200,16 +304,22 @@ def warnUnusedRefresh(cfg):
 
 
 def findHint(hints, name, paths=(), root=None):
-    """The hint for a release: exact match on its booktree name, then on the full path of any of its files,
-    then on any ancestor folder of those files below `root` (the source path), so a hint keyed by the release
+    """The hint for a release (see findHintKey), or None when there is none."""
+    key = findHintKey(hints, name, paths, root)
+    return None if key is None else _found(hints, key)
+
+
+def findHintKey(hints, name, paths=(), root=None):
+    """The key of the hint for a release: exact match on its booktree name, then on the full path of any of its
+    files, then on any ancestor folder of those files below `root` (the source path), so a hint keyed by the release
     folder also covers files in cd1/, cd2/ sub-folders. Returns None when there is none."""
     if not hints:
         return None
     if name in hints:
-        return _found(hints, name)
+        return name
     for p in paths:
         if p in hints:
-            return _found(hints, p)
+            return p
     #ancestor walk only with a known, comparable source root: without one a hint keyed by a top-level folder
     #such as "/data" would apply to every release
     if not root:
@@ -221,7 +331,7 @@ def findHint(hints, name, paths=(), root=None):
         parent = os.path.dirname(os.path.normpath(p))
         while parent and parent not in ("/", ".", root):
             if parent in hints:
-                return _found(hints, parent)
+                return parent
             nxt = os.path.dirname(parent)
             if nxt == parent:
                 break
