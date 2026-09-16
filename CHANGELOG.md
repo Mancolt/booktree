@@ -9,6 +9,9 @@ point is tag `upstream-baseline`.
 - `--pin RELEASE=ASIN` (repeatable; `Config/pins`): use that Audible product for the release and re-process it
   now, ignoring its cached answers and processed marker. Shorthand for a hint `{"asin": ..., "refresh": true}`;
   a malformed pin exits 2, an unused one is reported at the end of the run.
+- `--remember` (`Config/remember_pins`): after the run, pins whose Audible product was accepted are written into the hints
+  file as `{"asin": ...}` so the correction persists; other entries are kept, the write is atomic, an unparsable
+  file is never overwritten. CONFIG.md and the README gained a "Correcting a match" section.
 - `Config/notify`: end-of-run summary to an [ntfy](https://ntfy.sh) topic (`ntfy_url`, token via `NTFY_TOKEN`;
   `on` = always / unmatched / failure) and a `heartbeat_url` fetched after a clean run. Best effort; URLs are not
   printed.

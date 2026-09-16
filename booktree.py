@@ -557,6 +557,9 @@ def runWithConfig(cfg):
     #validate the hints file and pins up front: a silently ignored hint would look like a matching failure
     try:
         myx_hints.getHints(cfg)
+        problem = myx_hints.validateRemember(cfg)
+        if problem:
+            return usageError(f"\n{problem}\n")
     except (myx_hints.HintsError, ValueError, OSError) as e:
         #HintsError and JSONDecodeError are both ValueErrors; an unreadable or malformed file is a usage error too
         return usageError(f"\nCould not use the hints: {e}\n")
@@ -581,6 +584,7 @@ def runWithConfig(cfg):
 
     #start the program
     code = main(cfg)
+    myx_hints.rememberPins(cfg)             # --remember: pins that matched a release go into the hints file
     if code != EXIT_OK and not RUN_SUMMARY["error"]:
         RUN_SUMMARY["error"] = "a configured path could not be processed"
     return code

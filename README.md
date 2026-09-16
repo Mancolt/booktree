@@ -78,11 +78,19 @@ configured, see [CONFIG.md](CONFIG.md#after-the-run-notifications-audiobookshelf
 * `abs`: ask Audiobookshelf to scan the library when new hardlinks were made;
 * `dedupe_roots`: do not hardlink a book whose files are already filed in a listed library.
 
-When a book matched the wrong product, or none, fix it in one line instead of editing the log:
+### Correcting a match
+
+booktree files each release once and never touches Audiobookshelf's database, so a wrong match is not re-applied
+on later runs and a correction is not undone. Wrong metadata only: use Audiobookshelf's *Match*. Wrong book, or no
+match at all: one line, no log editing:
 
 ~~~
-booktree.py /Config/config.json --pin "Author - Title=B0C5Q9XJ1K"
+booktree.py /Config/config.json --pin "Author - Title=B0C5Q9XJ1K" --remember
 ~~~
+
+The release is re-filed under the right name with the right OPF; `--remember` keeps the correction in your hints
+file for future runs. Remove the old, wrong folder by hand (booktree never deletes). Details in
+[CONFIG.md](CONFIG.md#correcting-a-match).
 
 ### Recommended Workflow
 

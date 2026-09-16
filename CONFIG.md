@@ -65,7 +65,8 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | mam/max_queries_per_run | | Runaway guard: maximum MAM searches in one run (one container invocation); further searches are skipped with a message and those releases stay unmatched until the next run (0 = unlimited). The 6-second spacing is the real safety net; this only stops a loop | 3000 |
 | json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
 | refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
-| pins | | List of `RELEASE=ASIN` strings: use that Audible ASIN for the release and re-process it now; same as `--pin` (see [Hints file](#hints-file---hints-json-or-confighints_file)) | |
+| pins | | List of `RELEASE=ASIN` strings: use that Audible ASIN for the release and re-process it now; same as `--pin` (see [Correcting a match](#correcting-a-match)) | |
+| remember_pins | | With `pins`: write each pin that matched a release into `hints_file` after the run; same as `--remember` | 0 |
 | notify/ntfy_url | | [ntfy](https://ntfy.sh) topic URL to post the run summary to; empty = off. Token via `NTFY_TOKEN` (or `notify/ntfy_token`). See [After the run](#after-the-run-notifications-audiobookshelf-scan-dedupe) | |
 | notify/on | | When to post: `always`, `unmatched` (unmatched books or a failure), `failure` | unmatched |
 | notify/heartbeat_url | | URL fetched (GET) after a clean run: an Uptime Kuma push URL, healthchecks.io ping, ... | |
@@ -134,7 +135,7 @@ sessions are IP/ASN-locked: a cookie created on one network does not work from a
 |---|---|
 | 0 | every configured path was processed (matched or not) |
 | 1 | an unhandled error; the traceback is on stdout/stderr and, with `--json-log`, a final `run` record carries `exit_code` and `error` |
-| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a malformed `--pin`, an invalid `notify`/`abs`/`dedupe_roots` setting, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
+| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a malformed `--pin`, `--remember` without a hints file, an invalid `notify`/`abs`/`dedupe_roots` setting, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
 | 130 | interrupted |
 
 ## Hints file (`--hints <json>` or `Config/hints_file`)
@@ -161,19 +162,13 @@ by the full path of any file in it:
 
 `--pin RELEASE=ASIN` (repeatable; `Config/pins` as a list) is the one-line form for the commonest correction: it is
 the same as a hint `{"asin": ASIN, "refresh": true}` for that release, so the release is re-processed now, ignoring
-its cached answers and its "already processed" marker, with the Audible product taken as authoritative:
-
-~~~
-booktree.py /Config/config.json --pin "Megan Fate Marshman - Relaxed.m4b=B0C5Q9XJ1K"
-~~~
-
-The release is named as booktree prints it after `Processing:` (or by path). A pin overrides an `asin` in the hints
-file for the same release; a malformed pin stops the run (exit 2); a pin that matched no release is reported at
-the end (`Warning: --pin ... matched no release in this run`). A pinned or refreshed release is scanned even when
-it is older than `Config/last_scan`, and is filed even when `dedupe_roots` finds its files already in a library
-(that copy is usually the wrong match being corrected). Hardlinks made by an earlier, wrong match are not removed:
-booktree never deletes anything under `media_path`. Pins apply to the normal (hybrid) modes; in `log` mode a row
-with `isMatched=True` is re-filed as logged and the `id3-asin` column is the way to change its ASIN.
+its cached answers and its "already processed" marker, with the Audible product taken as authoritative; with
+`--remember` (`Config/remember_pins`) the pin is written into this file afterwards. See
+[Correcting a match](#correcting-a-match). A pin overrides an `asin` in the hints file for the same release. A pinned
+or refreshed release is scanned even when it is older than `Config/last_scan`, and is filed even when `dedupe_roots`
+finds its files already in a library (that copy is usually the wrong match being corrected). Pins apply to the normal
+(hybrid) modes; in `log` mode a row with `isMatched=True` is re-filed as logged and the `id3-asin` column is the way
+to change its ASIN.
 
 An invalid hints file (or one over 16 MiB) stops the run before anything is processed. Path keys are matched
 against files under `source_path` only; a key such as `/data` never matches. In `log` mode (`fix.csv`) a non-empty
@@ -190,6 +185,40 @@ Duration is evidence in every search: among results that pass the title/author c
 threshold, a result whose Audible runtime is within 2 minutes of the expected duration is preferred over one that
 is not; results with equal scores prefer the closer runtime. With no runtime information (files report no duration)
 the behaviour is unchanged: the first highest score wins.
+
+## Correcting a match
+
+booktree processes a release once: after a match is filed, a processed marker is written for that release
+(`__cache__/book/...`, no expiry) and later runs print `Skipping: ... already processed`. booktree never reads or
+writes Audiobookshelf's database; it only creates the folder, the hardlinks and a `metadata.opf` at filing time.
+So a wrong match is not re-applied on the next run, and a correction is never undone by booktree.
+
+**Wrong metadata, files landed somewhere acceptable.** Use Audiobookshelf's own *Match* on the item. ABS keeps
+that in its database and only re-reads a `metadata.opf` when the file itself changes, which booktree will not do
+for a processed release. The folder name stays whatever the wrong match produced.
+
+**Wrong book altogether** (wrong `Author/Title` folder and OPF), or a release that never matched:
+
+~~~
+booktree.py /Config/config.json --pin "Author - Title=B0C5Q9XJ1K" --remember
+~~~
+
+* `--pin RELEASE=ASIN` re-processes that release only, with the Audible product taken as authoritative: correct
+  folder, correct OPF, the processed marker, cached answers, `last_scan` and `dedupe_roots` all bypassed. `RELEASE`
+  is the name booktree prints after `Processing:` (the `book` column of the CSV), or the release's full path.
+  Repeatable. A malformed pin stops the run (exit 2); one that matched no release is reported at the end.
+* `--remember` writes each pin whose Audible product was accepted for a release into the hints file
+  (`Config/hints_file` or `--hints`) as `{"asin": "..."}`, so the correction also survives `--no-cache` or a cache
+  wipe. A pin Audible could not resolve is reported and not written (the run fell back to the normal search). Other entries and other fields of
+  the same entry are kept; the file is rewritten atomically after the run; a file that cannot be parsed is never
+  overwritten, and a dry run only announces what it would write. It needs a hints file path (exit 2 otherwise)
+  and the file must exist, so start one with `{}`. Without `--remember` a pin lives only in that command line.
+* The old, wrong folder stays: booktree never deletes anything under `media_path`. Remove it by hand (the files
+  are hardlinks, the download is untouched); Audiobookshelf drops the item on its next scan and picks the new
+  folder up (`abs` below triggers that scan).
+
+The hints file is the persistent corrections table: plain JSON, read on every run, applied whenever that release
+is processed. `--remember` is a convenience for filling it; editing it by hand is equally fine.
 
 ## After the run: notifications, Audiobookshelf scan, dedupe
 
