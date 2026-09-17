@@ -14,8 +14,9 @@ The ABS API token comes from the environment (`ABS_API_TOKEN`) or the first line
 Dedupe: two folders hold the same book when their media files are the same inodes (hardlinks), which is
 exactly how booktree files a download. Before hardlinking a matched book its source files are looked up in an
 index of (device, inode) built once per run from the dedupe roots; a book already present is reported and left
-alone, nothing is ever deleted. A book counts as filed only when every one of its files is (a filing that was
-interrupted half-way is completed, as hardlinkFile skips files that already exist). A root that contains, or lies
+alone, nothing is ever deleted. A book counts as filed only when every one of its files is in the same library
+folder (a filing that was interrupted half-way, or split across two folders after a multibook run or a manual
+move, is completed; hardlinkFile skips files that already exist at the new target). A root that contains, or lies
 inside, a source path is refused: the downloads themselves would then count as "already filed" and nothing under
 it would ever be hardlinked.
 """
@@ -91,7 +92,12 @@ def _buildIndex(roots):
 
 
 def alreadyFiled(cfg, files):
-    """The library folder that already holds every one of `files` (paths of a book's media files), or None."""
+    """The library folder that already holds every one of `files` (paths of a book's media files), or None.
+
+    Every file must be present *and* they must all live in the same folder: discs filed under two different
+    matches (multibook-on, then off; or a later move in the library) are not "already filed" — hardlinkUnlessFiled
+    should complete the release, then the processed marker would otherwise hide the rest of the files forever.
+    """
     global _index, _indexRoots
     roots = dedupeRoots(cfg)
     if not roots:
@@ -110,7 +116,12 @@ def alreadyFiled(cfg, files):
         if not folder:
             return None
         folders.append(folder)
-    return folders[0] if folders else None
+    if not folders:
+        return None
+    first = folders[0]
+    if any(folder != first for folder in folders[1:]):
+        return None          # including sibling disc_folder dirs: re-link is skip-if-exists, not a skip-forever
+    return first
 
 
 # ---------------------------------------------------------------- Audiobookshelf

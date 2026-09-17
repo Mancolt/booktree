@@ -357,6 +357,39 @@ class LibraryTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(myx_library.alreadyFiled(cfg, [self.source_file, second]), target)
 
+    def test_files_in_different_library_folders_are_not_already_filed(self):
+        # multibook-on filed each disc as its own book; or the operator moved one disc in ABS. The inodes are
+        # all in the library, but no single folder holds the release — do not skip, or cacheMe would hide it.
+        cfg = self.cfg(**{"Config/dedupe_roots": [self.lib]})
+        second = os.path.join(self.src, "Some Book", "cd2.m4b")
+        with open(second, "wb") as fh:
+            fh.write(b"\x00" * 16)
+        first_dir = os.path.join(self.lib, "Author", "Some Book")
+        other_dir = os.path.join(self.lib, "Author", "Some Book Disc 2")
+        os.makedirs(other_dir)
+        os.link(self.source_file, os.path.join(first_dir, "cd1.m4b"))
+        os.link(second, os.path.join(other_dir, "cd2.m4b"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(myx_library.alreadyFiled(cfg, [self.source_file, second]))
+        import booktree
+        import myx_classes
+        mb = myx_classes.MAMBook("Some Book")
+        match = myx_classes.Book(asin=ASIN, title="Some Book")
+        match.authors = [myx_classes.Contributor("Author")]
+        for name, path in (("Some Book/book.m4b", self.source_file), ("Some Book/cd2.m4b", second)):
+            bf = myx_classes.BookFile(name, path, self.src, self.lib)
+            bf.ffprobeBook = match
+            mb.files.append(bf)
+        mb.ffprobeBook = mb.bestAudibleMatch = match
+        mb.metadata = "audible"
+        mb.isMatched = True
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(booktree.hardlinkUnlessFiled(mb, cfg))
+        unified = os.path.join(self.lib, "Author", "Some Book")
+        self.assertTrue(os.path.exists(os.path.join(unified, "book.m4b")), out.getvalue())
+        self.assertTrue(os.path.exists(os.path.join(unified, "cd2.m4b")), out.getvalue())
+        self.assertNotIn("Already in the library", out.getvalue())
+
     def test_pinned_or_refreshed_book_is_filed_even_when_a_copy_exists(self):
         # the copy in the library is the wrong match being corrected: dedupe must not block the pin
         import booktree

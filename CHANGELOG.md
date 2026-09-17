@@ -33,6 +33,12 @@ point is tag `upstream-baseline`.
   problems print a message instead of a traceback. With `--json-log`, a run that fails with an unhandled error
   still appends a `run` record carrying `exit_code` and `error`.
 
+### Fixed
+- `Config/dedupe_roots`: a multi-file release whose discs are already hardlinked under *different* library
+  folders (a prior `multibook` run, or a file moved in the library) is no longer reported as already filed.
+  The first folder used to win, `hardlinkUnlessFiled` skipped, and the processed marker then hid the rest of
+  the files on later runs.
+
 ### Changed
 - The cookie store is `<log_path>/cookies.json` (owner-readable, written atomically) instead of `cookies.pkl`.
   A pickle from a shared directory was loaded on every run, which executes whatever the file contains; an existing
