@@ -192,8 +192,7 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     #print(f"\nCategorizing books from {len(allFiles)} files, please wait...\n")
     hints = myx_hints.getHints(cfg) if last_run else {}
     # last_scan picks which *releases* are new. Include every file of a hot release so a later
-    # disc is not dropped (and so duration/dedupe see the whole book), then re-process even if
-    # the release was cached when only the first disc existed.
+    # disc is not dropped (duration/dedupe see the whole book).
     hot = hotGroupingKeys(allFiles, path, mediaPath, last_run, hints, multibook) if last_run else None
     for f in allFiles:
         fullpath = os.path.join(path, f)
