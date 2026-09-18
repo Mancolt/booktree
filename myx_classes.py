@@ -114,12 +114,14 @@ class Book:
             return ""
     
     def getSeriesParts(self, delimiter=",", encloser="", stripaccents=True):
+        #the name is cleansed like a contributor (as upstream did); the part is kept as is, so that a decimal
+        #part such as 17.5 is logged as 17.5 and not as "17 5"
         seriesparts = []
         for s in self.series:
             if len(s.name.strip()):
-                seriesparts.append(Contributor(f"{s.name} {s.separator}{s.part}")) 
-            
-        return myx_utilities.getList(seriesparts, delimiter, encloser, stripaccents=True) 
+                text = " ".join(f"{myx_utilities.cleanseAuthor(s.name)} {s.separator}{s.part}".split())
+                seriesparts.append(f"{encloser}{text}{encloser}")
+        return delimiter.join(seriesparts)
     
     def setAuthors(self, authors):
         #Given a csv of authors, convert it to a list
@@ -145,6 +147,31 @@ class Book:
                 else:
                     self.series.append(Series(str(p[0]).strip(), ""))
             
+    def setSeriesFromLog(self, series, seriesparts):
+        """Rebuild the series from a run-log row. The log writes the names in `series` and "Name part" in
+        `seriesparts` without a `#`, so the part can only be told from a name that itself ends in a number
+        ("Area 51") with the names at hand. Without names (a hand-written row) fall back to `Name #part`."""
+        names = [n.strip() for n in str(series or "").split(",") if n.strip()]
+        parts = [p.strip() for p in str(seriesparts or "").split(",") if p.strip()]
+        if not names:
+            return self.setSeries(str(seriesparts or ""))
+        #`series` went through cleanseSeries, `seriesparts` through cleanseAuthor: compare both the same way
+        norm = lambda text: myx_utilities.cleanseAuthor(myx_utilities.cleanseSeries(text))       # noqa: E731
+        for name in names:
+            key = norm(name)
+            part = ""
+            for p in parts:
+                q = norm(p)
+                if q == key:
+                    break
+                if q.startswith(key + " ") or q.startswith(key + "#"):
+                    part = q[len(key):].strip().lstrip("#").strip()
+                    m = re.fullmatch(r"(\d+) (\d+)", part)          # "17 5": a decimal part logged before the fix
+                    if m:
+                        part = f"{m.group(1)}.{m.group(2)}"
+                    break
+            self.series.append(Series(name, part))
+
     def getDictionary(self, book, ns=""):
         book[f"{ns}matchRate"]=self.matchRate
         book[f"{ns}asin"]=self.asin
