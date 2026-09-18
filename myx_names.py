@@ -33,6 +33,7 @@ SERIES_ABBREV = re.compile(r"^[A-Z]{1,4}\s?\d{1,3}(?:[.\-]\d)?$")
 SUBTITLE_NOISE = re.compile(r"^an?\s+(?:\w+\s+){0,3}(?:novel|thriller|mystery|story|memoir|novella|series)$", re.IGNORECASE)
 TITLE_TAIL = re.compile(r"[\s:,]+an?\s+(?:novel|thriller|mystery|memoir|novella)$", re.IGNORECASE)
 DISC_FOLDER = re.compile(r"^(cd|disc|disk|part)\s*\d+$", re.IGNORECASE)
+FORMAT_FOLDER = re.compile(r"^(mp3|m4b|m4a|flac|ogg|opus|aac|wma|mp4)$", re.IGNORECASE)
 # series parts run 1..99 (with an optional .5); "Fahrenheit 451" / "Apollo 13"-style titles are not series
 SERIES_NUM = re.compile(r"^(?P<series>[^\d,]+?)\s+(?:#\s*|book\s+|vol\.?\s*|volume\s+)?(?P<part>\d{1,2}(?:\.\d)?)$", re.IGNORECASE)
 BOOK_N_TAIL = re.compile(r"^(?P<rest>.+?)[,\s]+(?:book|vol\.?|volume)\s+(?P<part>\d{1,3}(?:\.\d)?)$", re.IGNORECASE)
@@ -265,9 +266,34 @@ def parseReleaseName(name, known_authors=(), file_name=None):
     return out
 
 
+def groupingName(fullPath, sourcePath, fallback):
+    """The folder that identifies a book: the release under `sourcePath`, walking past cd/disc/disk/part N
+    parents. Two discs of one release become one book; two releases that both use `cd1/` stay separate.
+    Author/Title layouts still key on the immediate (non-disc) parent. A format folder under a disc
+    (`cd1/MP3/`) is skipped the same way. Falls back to `fallback` for a loose file or a path outside
+    the source."""
+    try:
+        rel = os.path.relpath(fullPath, sourcePath) if sourcePath and fullPath else ""
+    except ValueError:
+        rel = ""
+    if not rel or rel.startswith(".."):
+        return fallback
+    parts = [p for p in rel.split(os.sep) if p and p != "."]
+    if len(parts) < 2:
+        return fallback
+    for i in range(len(parts) - 2, -1, -1):
+        name = parts[i].strip()
+        # cd1/ itself, and a codec folder sitting under it (cd1/MP3/), are not the release
+        parent_is_disc = i > 0 and bool(DISC_FOLDER.match(parts[i - 1].strip()))
+        if DISC_FOLDER.match(name) or (parent_is_disc and FORMAT_FOLDER.match(name)):
+            continue
+        return parts[i]
+    return parts[0]
+
+
 def releaseNameForBook(files, sourcePath, name):
     """The best name to parse for a book: the first path component under the source path (the release folder,
-    or the loose file name). Falls back to `name` (booktree's key, which is a disc folder for cd1/ layouts)."""
+    or the loose file name). Falls back to `name` (booktree's grouping key)."""
     for f in files:
         full = getattr(f, "fullPath", None) or ""
         try:

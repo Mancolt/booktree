@@ -13,6 +13,7 @@ import myx_hints
 import myx_jsonlog
 import myx_library
 import myx_notify
+import myx_names
 import csv
 import httpx
 
@@ -190,58 +191,48 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     print (f"Scanning {len(allFiles)} downloaded since {datetime.fromtimestamp(last_run)}, please wait...")
     #print(f"\nCategorizing books from {len(allFiles)} files, please wait...\n")
     hints = myx_hints.getHints(cfg) if last_run else {}
+    # last_scan picks which *releases* are new. Include every file of a hot release so a later
+    # disc is not dropped (duration/dedupe see the whole book).
+    hot = hotGroupingKeys(allFiles, path, mediaPath, last_run, hints, multibook) if last_run else None
     for f in allFiles:
-        #only process files downloaded after last_scan, unless the operator asked for this release (--refresh/--pin)
-        
-        #check the last modtime of this file
         fullpath = os.path.join(path, f)
-        if os.path.getmtime(fullpath) > last_run or refreshRequested(hints, fullpath, path):
-            #for each book file
-            #print(f"Categorizing: {f}")
+        bf=myx_classes.BookFile(f, fullpath, path, mediaPath)
+        key=bookGroupingKey(bf, multibook)
+        if hot is not None and key not in hot:
+            continue
+        bf.ffprobe(key)
 
-            #create a bookFile
-            bf=myx_classes.BookFile(f, fullpath, path, mediaPath)
+        #if the book exists, this must be multi-file book, append the files
+        hashKey=myx_utilities.getHash(str(key))
+        if hashKey in book:
+            book[hashKey].files.append(bf)
+        else:
+            book[hashKey]=myx_classes.MAMBook(key)
+            book[hashKey].ffprobeBook=bf.ffprobeBook
+            book[hashKey].isSingleFile=(multibook) or (bf.hasNoParentFolder())
+            book[hashKey].files.append(bf)
+            book[hashKey].metadata = "id3"
 
-            #create dictionary using book (assumed to be the the parent Folder) as the key
-            #if there's no parent folder or if multibook is on, then the filename is the key
-            if ((multibook) or (bf.hasNoParentFolder())):
-                key=bf.getFileName()
-            else:
-                key=bf.getParentFolder()
-
-            #read metadata
-            bf.ffprobe(key)
-
-            #at this point, the books is either at the root, or under a book folder
-            #print (f"Adding {bf.fullPath}\nParent:{bf.getParentFolder()}", end="\r")
-
-            #if the book exists, this must be multi-file book, append the files
-            hashKey=myx_utilities.getHash(str(key))
-            #print (f"Book: {key}\nHashKey: {hashKey}")
-            if hashKey in book:
-                book[hashKey].files.append(bf)
-            else:
-                #New MAMBook file has a name, a file and a ffprobeBook
+        #add books from multi-book collections
+        for mbc in multiBookCollections:
+            for f in mbc.files:
+                print (f"Adding {f.file} as a new book", end="\r")
+                key=str(os.path.basename(f.file))
+                hashKey=myx_utilities.getHash(key)
                 book[hashKey]=myx_classes.MAMBook(key)
-                book[hashKey].ffprobeBook=bf.ffprobeBook
-                book[hashKey].isSingleFile=(multibook) or (bf.hasNoParentFolder())
-                book[hashKey].files.append(bf)
-                book[hashKey].metadata = "id3"
+                f.ffprobeBook.title=""
+                book[hashKey].ffprobeBook=f.ffprobeBook
+                book[hashKey].isSingleFile=True
+                book[hashKey].files.append(f)
 
-            #add books from multi-book collections
-            for mbc in multiBookCollections:
-                #print (f"NewBook: {mbc.name}  Files: {len(mbc.files)}", end="\r")
-                #for multi-book collection, each file IS a book
-                for f in mbc.files:
-                    print (f"Adding {f.file} as a new book", end="\r")
-                    key=str(os.path.basename(f.file)) 
-                    hashKey=myx_utilities.getHash(key)
-                    book[hashKey]=myx_classes.MAMBook(key)
-                    #multi book collection titles are almost always bad, so don't even try to use it for search
-                    f.ffprobeBook.title=""
-                    book[hashKey].ffprobeBook=f.ffprobeBook
-                    book[hashKey].isSingleFile=True
-                    book[hashKey].files.append(f)
+    # a later disc under last_scan pulled its older siblings in: re-process even if the
+    # release was cached when only the first disc existed. All-new releases still use isCached.
+    if last_run:
+        for mb in book.values():
+            try:
+                mb.scanTriggered = any(os.path.getmtime(f.fullPath) <= last_run for f in mb.files)
+            except OSError:
+                mb.scanTriggered = True
 
     #for multi-file folders/book - check if there are any multi-book collections
     if multibook:
@@ -261,7 +252,8 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
         #print (f"Book: {b} isCached: {book[b].isCached('book')}")
         #hints are looked up now that every file of the release is known (a hint may be keyed by any file path)
         book[b].applyHints(cfg)
-        if ((no_cache) or book[b].refresh or (not book[b].isCached("book", cfg))):
+        if ((no_cache) or book[b].refresh or getattr(book[b], "scanTriggered", False)
+                or (not book[b].isCached("book", cfg))):
             #process the book
             print(f"Processing: {book[b].name}...")
             normalBooks.append(book[b])            
@@ -386,12 +378,39 @@ def noteRunTotals(cfg, logfile, books, matched):
     RUN_SUMMARY["dry_run"] = bool(cfg.get("Config/flags/dry_run"))
 
 
+def bookGroupingKey(bf, multibook=False):
+    """The dict key for a scanned file: filename when multibook or the file sits at the source root,
+    otherwise the release folder (walking past cd/disc/part parents so discs of one book stay together)."""
+    if multibook or bf.hasNoParentFolder():
+        return bf.getFileName()
+    return myx_names.groupingName(bf.fullPath, bf.sourcePath, bf.getParentFolder())
+
+
+def hotGroupingKeys(allFiles, path, mediaPath, last_run, hints, multibook=False):
+    """Grouping keys that have at least one file newer than last_scan or a --refresh/--pin hint."""
+    hot = set()
+    for f in allFiles:
+        fullpath = os.path.join(path, f)
+        try:
+            newer = os.path.getmtime(fullpath) > last_run
+        except OSError:
+            continue
+        if newer or refreshRequested(hints, fullpath, path):
+            bf = myx_classes.BookFile(f, fullpath, path, mediaPath)
+            hot.add(bookGroupingKey(bf, multibook))
+    return hot
+
+
 def refreshRequested(hints, fullpath, root):
     """True when a --refresh/--pin hint names this file, its release folder or a path covering it: such a release
     is processed even when it is older than Config/last_scan (the operator is asking for it now)."""
     if not hints:
         return False
-    for name in (os.path.basename(fullpath), os.path.basename(os.path.dirname(fullpath))):
+    names = [os.path.basename(fullpath), os.path.basename(os.path.dirname(fullpath))]
+    release = myx_names.groupingName(fullpath, root, names[1] or names[0])
+    if release not in names:
+        names.append(release)
+    for name in names:
         hint = myx_hints.findHint(hints, name, [fullpath], root)
         if hint and hint.get("refresh"):
             return True

@@ -78,6 +78,12 @@ point is tag `upstream-baseline`.
 - `Config/pin_max_runtime_delta_min`: optional hard limit on the runtime mismatch of a pinned ASIN (default off).
 
 ### Fixed
+- Multi-disc releases (`cd1/`, `Disc 01/`, `part 2/`) were grouped by the disc folder. Two downloads that both
+  used `cd1/` became one book (files from both hardlinked to the first match) and a single release's discs were
+  matched separately with one-disc runtime (the wrong edition could win). Grouping now walks past disc parents
+  to the release folder; `Author/Title` layouts and loose files are unchanged. `--pin`/`--refresh` by release
+  name also sees files inside `cd1/`. A later disc under a `last_scan` cutoff is scanned with its siblings
+  and re-processed even if the release was cached when only the first disc existed.
 - `title_patterns`: the template and CONFIG.md wrote word boundaries as `"\bpart\b"`, which JSON reads as the word
   between two backspace characters, so `part`, `track`, `of` and `book` were never removed from an alternative
   title. The examples now read `"\\bpart\\b"`, and a pattern containing a backspace is read as the intended `\b`

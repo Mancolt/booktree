@@ -272,8 +272,9 @@ downloads themselves would then count as already filed.
 
 Upstream searched Audible with the whole file name as the title when the id3 tags were missing, so
 `Megan Fate Marshman - Relaxed.m4b` became `title: megan fate marshman relaxed` and found nothing. booktree now
-parses the release name (the folder under `source_path`, or the file name for a loose file; for `cd1/` layouts the
-release folder) into title, author(s), series/part and ASIN, recognising `Author - Title`, `Title - Author`,
+parses the release name (the folder under `source_path`, or the file name for a loose file; for `cd1/` layouts
+the release folder, and those discs are grouped as one book) into title, author(s), series/part and ASIN,
+recognising `Author - Title`, `Title - Author`,
 `Title by Author`, `Author-Title`, `Author - Series NN - Title`, `Series NN - Title - Author`, `Title, Series Book N`,
 `Title [ASIN]`, `Title [ISBN10]`, `Title [Series NN]`, `Last, First` author order, leading track numbers, and
 strips `(Unabridged)`, `[M4B]`, bitrates, trailing years and "X narrator" fragments.
