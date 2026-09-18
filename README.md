@@ -5,8 +5,9 @@
 > [docs/FORK.md](docs/FORK.md). Image: `ghcr.io/mancolt/booktree:latest`. Issues and pull requests are welcome; see
 > [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 >
-> **Status: pre-release.** `:latest` is published only from tagged releases (`v*`); every merge to `main` publishes
-> `:edge`, which is untested beyond CI. Until the first release the image is private.
+> **Releases:** `:latest`, `:3.0.0` and `:3.0` are published from tagged releases (`v*`, see
+> [CHANGELOG.md](CHANGELOG.md)); every merge to `main` publishes `:edge`, which is untested beyond CI. Pin a version
+> tag in anything unattended.
 
 Reorganize your audiobooks using ID3 or Audible metadata into a tree structure recommended and supported by media servers like Audibookshelf. The originals are untouched and will be hardlinked to their destination
 
