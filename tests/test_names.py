@@ -315,3 +315,30 @@ class DiscFolderTest(unittest.TestCase):
         self.assertEqual(len(targets), 4)
         self.assertIn("/lib/Author/Title/Title Disk 1", targets)
 
+
+
+class InSeriesNoPartTest(unittest.TestCase):
+    def target(self, part, **over):
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Three More Novellas")
+        book.authors = [myx_classes.Contributor("Lee Child")]
+        book.series = [myx_classes.Series("Jack Reacher", part)]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}", **over})
+        bf = myx_classes.BookFile("x.m4b", "/dl/x.m4b", "/dl", "/lib")
+        return bf.getConfigTargetPath(cfg, book)
+
+    def test_series_without_a_part_uses_the_no_part_template(self):
+        # upstream #27: "Jack Reacher # - Three More Novellas"
+        self.assertEqual(self.target(""), "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
+        self.assertEqual(self.target("   "), "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
+        self.assertEqual(self.target("23.5"), "/lib/Lee Child/Jack Reacher/Jack Reacher #23.5 - Three More Novellas")
+        self.assertEqual(self.target("3"), "/lib/Lee Child/Jack Reacher/Jack Reacher #3 - Three More Novellas")
+
+    def test_template_is_configurable_and_the_old_layout_can_be_kept(self):
+        self.assertEqual(self.target("", **{"Config/target_path/in_series_no_part": "{author}/{series}/{title}"}),
+                         "/lib/Lee Child/Jack Reacher/Three More Novellas")
+        old = "{author}/{series}/{series} #{part} - {title}"
+        self.assertEqual(self.target("", **{"Config/target_path/in_series_no_part": old}),
+                         "/lib/Lee Child/Jack Reacher/Jack Reacher # - Three More Novellas")
+        self.assertEqual(self.target("", **{"Config/target_path/in_series_no_part": ""}),       # blank = default
+                         "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")

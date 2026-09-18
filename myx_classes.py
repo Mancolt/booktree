@@ -27,6 +27,10 @@ class Contributor:
     name:str
     #books:list[int]= field(default_factory=list)
 
+#target_path template for a book in a series whose part is unknown (Config/target_path/in_series_no_part)
+IN_SERIES_NO_PART = "{author}/{series}/{series} - {title}"
+
+
 #Series Class
 @dataclass
 class Series:
@@ -307,6 +311,7 @@ class BookFile:
         multi_author = cfg.get("Config/target_path/multi_author")
         in_series = cfg.get("Config/target_path/in_series")
         no_series = cfg.get("Config/target_path/no_series")
+        in_series_no_part = cfg.get("Config/target_path/in_series_no_part") or IN_SERIES_NO_PART
         disc_folder = cfg.get("Config/target_path/disc_folder")
 
         if (book is not None):
@@ -367,7 +372,10 @@ class BookFile:
 
             sPath = ""
             if len(book.series):
-                x = in_series.format (**tokens)
+                #a series entry without a part (a novella collection, a companion) would render "{part}" empty and
+                #leave "Series # - Title" behind (upstream #27): such books use in_series_no_part instead
+                template = in_series if len(tokens["part"]) else in_series_no_part
+                x = template.format (**tokens)
                 #use in_series format
                 for p in x.split ("/"):
                     sPath=os.path.join (sPath, p.strip())
