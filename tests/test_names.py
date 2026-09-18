@@ -2,6 +2,7 @@ import os
 import unittest
 
 import myx_names as N
+from tests.support import FakeConfig
 
 
 def parse(name, known=(), file_name=None):
@@ -288,3 +289,29 @@ class BookGroupingKeyTest(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(src)
+
+
+class DiscFolderTest(unittest.TestCase):
+    def test_every_folder_grouped_as_a_disc_is_filed_into_a_disc_subfolder(self):
+        import myx_utilities
+        for folder in ("cd1", "CD 2", "Disc 1", "disc01", "disk 1", "Disk2", "Part 2", "part 10", "Title Disc 2"):
+            self.assertTrue(N.DISC_FOLDER.match(folder) is None or myx_utilities.isMultiCD(folder), folder)
+        for folder in ("cd1", "Disk 1", "Part 2", "Title Disc 2"):
+            self.assertTrue(myx_utilities.isMultiCD(folder), folder)
+        for folder in ("Counterpart 2", "Rampart 5", "Some Book", "Chapter 3", "1984"):
+            self.assertFalse(myx_utilities.isMultiCD(folder), folder)
+
+    def test_grouped_discs_get_distinct_target_folders(self):
+        # Disk 1/01.mp3 and Disk 2/01.mp3 are one book since #15; they must not both target Author/Title/01.mp3
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Title")
+        book.authors = [myx_classes.Contributor("Author")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for disc in ("Disk 1", "Disk 2", "Part 1", "Part 2"):
+            bf = myx_classes.BookFile(f"Title/{disc}/01.mp3", f"/dl/Title/{disc}/01.mp3", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(len(targets), 4)
+        self.assertIn("/lib/Author/Title/Title Disk 1", targets)
+
