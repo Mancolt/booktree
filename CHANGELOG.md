@@ -78,6 +78,9 @@ point is tag `upstream-baseline`.
 - `Config/pin_max_runtime_delta_min`: optional hard limit on the runtime mismatch of a pinned ASIN (default off).
 
 ### Fixed
+- `disk N/` and `part N/` folders, which are grouped into one book since the multi-disc fix below, were filed
+  into a flat `Author/Title/` folder, so `Disk 1/01.mp3` and `Disk 2/01.mp3` collided and the second was
+  silently skipped. They now get a `disc_folder` subfolder like `cd N/` and `disc N/` always did.
 - Multi-disc releases (`cd1/`, `Disc 01/`, `part 2/`) were grouped by the disc folder. Two downloads that both
   used `cd1/` became one book (files from both hardlinked to the first match) and a single release's discs were
   matched separately with one-disc runtime (the wrong edition could win). Grouping now walks past disc parents
