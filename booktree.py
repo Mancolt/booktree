@@ -53,7 +53,7 @@ def buildTreeFromLog(files, logfile, cfg):
                         bf.isMatched = (str(row["isMatched"]).lower() == "true")
                         bf.ffprobeBook.setAuthors(row["id3-authors"])
                         bf.ffprobeBook.setNarrators(row["id3-narrators"])
-                        bf.ffprobeBook.setSeries(row["id3-seriesparts"])
+                        bf.ffprobeBook.setSeriesFromLog(row.get("id3-series", ""), row["id3-seriesparts"])
 
                         #does this book exist?
                         hashKey=myx_utilities.getHash(f"{i}-{row['book']}")

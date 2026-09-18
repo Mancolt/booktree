@@ -150,3 +150,43 @@ class RefreshEndToEndTest(unittest.TestCase):
         self.assertIn("Applying hint for junk: {'refresh': True}", third)
         self.assertIn("Pinned ASIN B0CC3NZ34S accepted", third)
         self.assertEqual(len(booktree.httpx.calls) if hasattr(booktree.httpx, "calls") else 2, 2)
+
+
+class SeriesRoundTripTest(unittest.TestCase):
+    """upstream #27: the log writes seriesparts as "Name part" (no '#'), the reader split on '#' and lost the part."""
+
+    def test_series_part_survives_a_trip_through_the_log(self):
+        import myx_classes
+        src = myx_classes.Book(title="The Honeymoon Heist")
+        src.series = [myx_classes.Series("Pike Logan", "17.5"), myx_classes.Series("Area 51", ""), myx_classes.Series("Dune", "1")]
+        row = {}
+        src.getDictionary(row, "id3-")
+        self.assertEqual(row["id3-series"], "Pike Logan,Area 51,Dune")
+        self.assertEqual(row["id3-seriesparts"], "Pike Logan 17.5,Area 51,Dune 1")          # CSV value unchanged
+        back = myx_classes.Book()
+        back.setSeriesFromLog(row["id3-series"], row["id3-seriesparts"])
+        self.assertEqual([(s.name, s.part) for s in back.series], [("Pike Logan", "17.5"), ("Area 51", ""), ("Dune", "1")])
+        self.assertEqual(back.getSeriesParts(), src.getSeriesParts())
+        # a row written before the fix ("17 5"), and names the two columns cleanse differently
+        back = myx_classes.Book()
+        back.setSeriesFromLog("Pike Logan,Hitchhiker's Guide: Trilogy", "Pike Logan 17 5,Hitchhikers Guide: Trilogy 2")
+        self.assertEqual([(s.name, s.part) for s in back.series], [("Pike Logan", "17.5"), ("Hitchhiker's Guide: Trilogy", "2")])
+        # the old reader turned the whole string into a series named "Pike Logan 17.5"
+        legacy = myx_classes.Book()
+        legacy.setSeries("Pike Logan 17.5")
+        self.assertEqual([(s.name, s.part) for s in legacy.series], [("Pike Logan 17.5", "")])
+
+    def test_hand_written_rows_still_accept_name_hash_part(self):
+        import myx_classes
+        b = myx_classes.Book()
+        b.setSeriesFromLog("", "Jack Reacher #3")                       # no series column: legacy '#' form
+        self.assertEqual([(s.name, s.part) for s in b.series], [("Jack Reacher", "3")])
+        b = myx_classes.Book()
+        b.setSeriesFromLog("Jack Reacher", "Jack Reacher #3")           # '#' with the names present
+        self.assertEqual([(s.name, s.part) for s in b.series], [("Jack Reacher", "3")])
+        b = myx_classes.Book()
+        b.setSeriesFromLog("Jack Reacher", "")                          # names only
+        self.assertEqual([(s.name, s.part) for s in b.series], [("Jack Reacher", "")])
+        b = myx_classes.Book()
+        b.setSeriesFromLog("", "")
+        self.assertEqual(b.series, [])
