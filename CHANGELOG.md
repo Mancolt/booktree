@@ -37,7 +37,7 @@ point is tag `upstream-baseline`.
 - `Config/dedupe_roots`: a multi-file release whose discs are already hardlinked under *different* library
   folders (a prior `multibook` run, or a file moved in the library) is no longer reported as already filed.
   The first folder used to win, `hardlinkUnlessFiled` skipped, and the processed marker then hid the rest of
-  the files on later runs.
+  the files on later runs. The `Title/cd1`, `Title/cd2` disc subfolders booktree creates still count as one book.
 
 ### Changed
 - The cookie store is `<log_path>/cookies.json` (owner-readable, written atomically) instead of `cookies.pkl`.

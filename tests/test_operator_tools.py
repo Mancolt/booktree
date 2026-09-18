@@ -390,6 +390,24 @@ class LibraryTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(unified, "cd2.m4b")), out.getvalue())
         self.assertNotIn("Already in the library", out.getvalue())
 
+    def test_disc_subfolders_of_one_book_count_as_already_filed(self):
+        # booktree itself files a multi-disc book as Title/cd1, Title/cd2 (disc_folder): that is one filed book
+        cfg = self.cfg(**{"Config/dedupe_roots": [self.lib]})
+        second = os.path.join(self.src, "Some Book", "cd2.m4b")
+        with open(second, "wb") as fh:
+            fh.write(b"\x00" * 16)
+        title = os.path.join(self.lib, "Author", "Some Book")
+        for disc, source in (("cd1", self.source_file), ("Disc 02", second)):
+            os.makedirs(os.path.join(title, disc))
+            os.link(source, os.path.join(title, disc, os.path.basename(source)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(myx_library.alreadyFiled(cfg, [self.source_file, second]), title)
+        # the same discs under two different titles are still a split filing
+        os.rename(os.path.join(title, "Disc 02"), os.path.join(self.lib, "Author", "Other Title"))
+        myx_library.reset()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(myx_library.alreadyFiled(cfg, [self.source_file, second]))
+
     def test_pinned_or_refreshed_book_is_filed_even_when_a_copy_exists(self):
         # the copy in the library is the wrong match being corrected: dedupe must not block the pin
         import booktree
