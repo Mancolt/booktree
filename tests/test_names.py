@@ -1,3 +1,4 @@
+import os
 import unittest
 
 import myx_names as N
@@ -113,6 +114,27 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.releaseNameForBook([F("/src/Loose.m4b")], "/src", "Loose.m4b"), "Loose.m4b")
         self.assertEqual(N.releaseNameForBook([F("/elsewhere/x.m4b")], "/src", "fallback"), "fallback")
 
+    def test_grouping_name_walks_past_disc_folders_and_keeps_releases_apart(self):
+        src = "/data/downloads"
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/d1.m4b", src, "cd1"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd2/d2.m4b", src, "cd2"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/cd1/d1.m4b", src, "cd1"), "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/Disc 01/track.mp3", src, "Disc 01"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/part 2/track.mp3", src, "part 2"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/MP3/d1.mp3", src, "MP3"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/cd1/MP3/d1.mp3", src, "MP3"), "Along Came a Spider")
+        # a title folder under cd1/ is the release, not the ancestor above the disc
+        self.assertEqual(
+            N.groupingName(f"{src}/Patterson/cd1/Along Came a Spider/a.m4b", src, "Along Came a Spider"),
+            "Along Came a Spider")
+        # a normal Book/file.m4b or Author/Title/file.m4b still keys on the immediate parent
+        self.assertEqual(N.groupingName(f"{src}/The Guest/book.m4b", src, "The Guest"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Patterson/The Guest/book.m4b", src, "The Guest"), "The Guest")
+        # a disc folder sitting at the source root stays itself; a loose file uses the fallback
+        self.assertEqual(N.groupingName(f"{src}/cd1/track.m4b", src, "cd1"), "cd1")
+        self.assertEqual(N.groupingName(f"{src}/loose.m4b", src, "loose.m4b"), "loose.m4b")
+        self.assertEqual(N.groupingName("/elsewhere/x.m4b", src, "fallback"), "fallback")
+
     def test_unparseable_names_degrade_to_a_title(self):
         for name in ("BT-TFS", "Dempsey.m4b", "Ember", "The Rise and Fall of the Great Powers"):
             p = parse(name)
@@ -197,3 +219,72 @@ class SecondPassTest(unittest.TestCase):
         self.assertTrue(N.authorsOverlap(["Lee Child"], ["Child, Lee"]))
         self.assertTrue(N.authorsOverlap(["Andrew Child"], ["Lee Child", "Andrew Child"]))
         self.assertFalse(N.authorsOverlap(["Stephen Fry"], ["Stephen King"]))
+
+
+class BookGroupingKeyTest(unittest.TestCase):
+    """Hybrid-mode grouping: discs of one release are one book; two releases' cd1/ folders are not."""
+
+    def _bf(self, rel, src="/data/downloads"):
+        import myx_classes
+        return myx_classes.BookFile(rel, f"{src}/{rel}", src, "/data/media")
+
+    def test_two_releases_with_cd1_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/cd1/d1.m4b")
+        spider = self._bf("Along Came a Spider/cd1/d1.m4b")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/d2.m4b")), "The Guest")
+
+    def test_normal_and_author_title_layouts_and_multibook_are_unchanged(self):
+        import booktree
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/book.m4b")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/book.m4b")), "The Guest")
+        loose = self._bf("loose.m4b")
+        self.assertEqual(booktree.bookGroupingKey(loose), "loose.m4b")
+        nested = self._bf("The Guest/cd1/d1.m4b")
+        self.assertEqual(booktree.bookGroupingKey(nested, multibook=True), "d1.m4b")
+
+    def test_pin_by_release_folder_sees_files_inside_cd1(self):
+        import booktree
+        import myx_hints
+        myx_hints._appliedRefresh.clear()
+        src = "/data/downloads"
+        hints = {"The Guest": {"asin": "B0CC3NZ34S", "refresh": True}}
+        full = f"{src}/The Guest/cd1/d1.m4b"
+        self.assertTrue(booktree.refreshRequested(hints, full, src))
+        self.assertFalse(booktree.refreshRequested({"Other Book": {"refresh": True}}, full, src))
+        self.assertFalse(booktree.refreshRequested({}, full, src))
+
+    def test_last_scan_of_one_new_disc_pulls_in_the_older_disc(self):
+        import booktree
+        import tempfile
+        import time
+        src = tempfile.mkdtemp()
+        try:
+            for rel in ("The Guest/cd1/d1.m4b", "The Guest/cd2/d2.m4b", "Other Book/file.m4b"):
+                os.makedirs(os.path.join(src, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(src, rel), "wb") as fh:
+                    fh.write(b"x")
+            old = time.time() - 3600
+            new = time.time() + 10
+            os.utime(os.path.join(src, "The Guest/cd1/d1.m4b"), (old, old))
+            os.utime(os.path.join(src, "Other Book/file.m4b"), (old, old))
+            os.utime(os.path.join(src, "The Guest/cd2/d2.m4b"), (new, new))
+            last_run = time.time()
+            files = ["The Guest/cd1/d1.m4b", "The Guest/cd2/d2.m4b", "Other Book/file.m4b"]
+            hot = booktree.hotGroupingKeys(files, src, "/media", last_run, {}, multibook=False)
+            self.assertEqual(hot, {"The Guest"})
+            guest = [booktree.bookGroupingKey(self._bf(rel, src)) for rel in files if rel.startswith("The Guest")]
+            self.assertEqual(set(guest), {"The Guest"})
+            # only a mix of old + new files should bypass the processed marker
+            mixed = [os.path.getmtime(os.path.join(src, rel)) <= last_run
+                     for rel in ("The Guest/cd1/d1.m4b", "The Guest/cd2/d2.m4b")]
+            self.assertTrue(any(mixed) and not all(mixed))
+            all_new_cutoff = old - 10
+            self.assertFalse(any(os.path.getmtime(os.path.join(src, rel)) <= all_new_cutoff
+                                 for rel in ("The Guest/cd1/d1.m4b", "The Guest/cd2/d2.m4b")))
+        finally:
+            import shutil
+            shutil.rmtree(src)
