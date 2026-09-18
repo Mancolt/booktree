@@ -1,9 +1,21 @@
 # Changelog
 
 All notable changes to this fork. Upstream history before the fork point is in the upstream repository; the fork
-point is tag `upstream-baseline`.
+point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
+first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
 ## Unreleased
+
+## 3.0.0 - 2026-09-18
+
+First release of the fork. Every item of the roadmap in docs/FORK.md is included; outputs stay compatible with
+upstream (same run-log columns, stdout phrases and target layout). Image: `ghcr.io/mancolt/booktree:3.0.0`
+(also `:3.0`, `:latest`).
+
+Upgrading from `myxdvz/booktree:latest`: nothing in a config file has to change. Worth doing: replace `"\bpart\b"`
+style `title_patterns` with `"\\bpart\\b"` (a repaired pattern is reported at start-up), move the MAM cookie out
+of the config into `MAM_SESSION_FILE`, and read the exit code (0 ok, 1 error, 2 configuration, 130 interrupted)
+instead of grepping stdout. `cookies.pkl` is removed on first start and replaced by `cookies.json`.
 
 ### Added
 - `Config/target_path/in_series_no_part` (default `{author}/{series}/{series} - {title}`): the template for a
