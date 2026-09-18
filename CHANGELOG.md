@@ -38,6 +38,11 @@ point is tag `upstream-baseline`.
   still appends a `run` record carrying `exit_code` and `error`.
 
 ### Fixed
+- Series parts survive a trip through the run log. The log writes `seriesparts` as `Name part` while the
+  log-mode reader (`fix.csv`) split on `#`, so the whole string became the series name and the part was lost
+  (upstream #27, half of it). The reader now pairs `seriesparts` with the `series` column; a decimal part is
+  logged as `17.5` instead of `17 5` (the only visible change in the corpus replay: the fuzzy-match string of four
+  novellas, same matches).
 - `Config/dedupe_roots`: a multi-file release whose discs are already hardlinked under *different* library
   folders (a prior `multibook` run, or a file moved in the library) is no longer reported as already filed.
   The first folder used to win, `hardlinkUnlessFiled` skipped, and the processed marker then hid the rest of
