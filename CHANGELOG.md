@@ -6,6 +6,10 @@ point is tag `upstream-baseline`.
 ## Unreleased
 
 ### Added
+- `Config/target_path/in_series_no_part` (default `{author}/{series}/{series} - {title}`): the template for a
+  book in a series whose part is unknown. `in_series` rendered `{part}` empty and produced folders such as
+  `Jack Reacher # - Three More Jack Reacher Novellas` (upstream #27); two unnumbered entries of one series could
+  collide. Set it to your `in_series` value to keep the old names. Books already filed are not moved.
 - `--pin RELEASE=ASIN` (repeatable; `Config/pins`): use that Audible product for the release and re-process it
   now, ignoring its cached answers and processed marker. Shorthand for a hint `{"asin": ..., "refresh": true}`;
   a malformed pin exits 2, an unused one is reported at the end of the run.

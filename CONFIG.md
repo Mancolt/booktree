@@ -32,6 +32,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
         "target_path": {
             "multi_author": "{first_author}",
             "in_series": "{author}/{series}/{series} #{part} - {title}",
+            "in_series_no_part": "{author}/{series}/{series} - {title}",
             "no_series": "{author}/{title}",
             "disc_folder": "{title} {disc}"
         },
@@ -92,6 +93,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | target_path  |        | |     |
 | | multi_author        | How to handle the Author folder for multi-author books: first_author, authors, "", "Static folder name" | first_author   |
 | | in_series           | Format of the generated tree for books in a series | {author}/{series}/{series} #{part} - {title}   |
+| | in_series_no_part   | Format for books in a series whose part number is unknown (a novella collection, a companion book): `in_series` would render `{part}` empty and leave `Series # - Title`. Set it to your `in_series` value to keep that | {author}/{series}/{series} - {title}   |
 | | no_series           | Format of the generated tree for books that are NOT in a series | {author}/{title}    |
 | | disc_folder         | Format of the folder name for multi-disc books (files whose parent folder is `cd N`, `disc N`, `disk N` or `part N`) | {title} {disc}    |
 | tokens      |         | |    |
