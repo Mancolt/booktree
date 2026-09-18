@@ -14,8 +14,10 @@ The ABS API token comes from the environment (`ABS_API_TOKEN`) or the first line
 Dedupe: two folders hold the same book when their media files are the same inodes (hardlinks), which is
 exactly how booktree files a download. Before hardlinking a matched book its source files are looked up in an
 index of (device, inode) built once per run from the dedupe roots; a book already present is reported and left
-alone, nothing is ever deleted. A book counts as filed only when every one of its files is (a filing that was
-interrupted half-way is completed, as hardlinkFile skips files that already exist). A root that contains, or lies
+alone, nothing is ever deleted. A book counts as filed only when every one of its files is in the same library
+book folder, where the disc subfolders booktree creates (Title/cd1, Title/cd2) belong to their parent (a filing
+that was interrupted half-way, or split across two folders after a multibook run or a manual move, is completed;
+hardlinkFile skips files that already exist at the new target). A root that contains, or lies
 inside, a source path is refused: the downloads themselves would then count as "already filed" and nothing under
 it would ever be hardlinked.
 """
@@ -24,6 +26,8 @@ import re
 import stat
 
 import requests
+
+import myx_utilities
 
 TIMEOUT = 30
 LIBRARY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")      # ABS ids are `lib_...` or UUIDs; anything else would change the URL path
@@ -91,7 +95,13 @@ def _buildIndex(roots):
 
 
 def alreadyFiled(cfg, files):
-    """The library folder that already holds every one of `files` (paths of a book's media files), or None."""
+    """The library folder that already holds every one of `files` (paths of a book's media files), or None.
+
+    Every file must be present *and* they must all belong to the same book folder (disc subfolders such as
+    Title/cd1, Title/cd2 count as their parent): discs filed under two different matches (multibook-on, then off;
+    or a later move in the library) are not "already filed" — hardlinkUnlessFiled should complete the release,
+    where the processed marker would otherwise hide the rest of the files forever.
+    """
     global _index, _indexRoots
     roots = dedupeRoots(cfg)
     if not roots:
@@ -110,7 +120,21 @@ def alreadyFiled(cfg, files):
         if not folder:
             return None
         folders.append(folder)
-    return folders[0] if folders else None
+    if not folders:
+        return None
+    # booktree files a multi-disc book as Title/cd1, Title/cd2 (Config/target_path/disc_folder): those are one
+    # book folder. "Title" next to "Title Disc 2" (a split filing) are not: their parents differ.
+    homes = [_bookFolder(folder) for folder in folders]
+    if any(home != homes[0] for home in homes[1:]):
+        return None
+    return homes[0]
+
+
+def _bookFolder(folder):
+    """The book folder a filed media file belongs to: its directory, or the parent when that is a disc subfolder."""
+    if myx_utilities.isMultiCD(os.path.basename(folder)):
+        return os.path.dirname(folder)
+    return folder
 
 
 # ---------------------------------------------------------------- Audiobookshelf

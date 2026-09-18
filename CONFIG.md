@@ -262,8 +262,9 @@ when their media files are the same inodes. Before hardlinking a matched release
 in an index of the media files under the listed directories (built once per run); if one is found, the release
 is reported (`Already in the library at ...; not hardlinking ...`, `already_filed` in the JSON log) and left
 alone, but still logged as matched (with its target path) and marked processed. A release counts as filed only
-when every one of its files is, so an interrupted filing is completed on the next run; symlinks in a library do
-not count. Nothing is ever deleted. Typical values are your
+when every one of its files is in the same library book folder (`Title/cd1`, `Title/cd2` disc subfolders count
+as `Title`), so an interrupted or split filing (discs left under two different matches) is completed on the next
+run; symlinks in a library do not count. Nothing is ever deleted. Typical values are your
 `media_path` (stops a second config from filing a clone of a book the first one already filed) or the libraries
 of other users on the same server. A root that contains, or lies inside, a `source_path` is refused, because the
 downloads themselves would then count as already filed.
