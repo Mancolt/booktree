@@ -6,6 +6,8 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+## 3.0.1 - 2026-09-19
+
 ### Fixed
 - Two releases that both use a codec folder (`Title/MP3/`, `Title/M4B/`) were grouped as one book
   named `MP3` and hardlinked to the first match. Grouping now walks past codec folders the same way
