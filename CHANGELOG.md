@@ -6,6 +6,12 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- Two releases that both use a codec folder (`Title/MP3/`, `Title/M4B/`) were grouped as one book
+  named `MP3` and hardlinked to the first match. Grouping now walks past codec folders the same way
+  it already walks past `cd1/`. `cd1/MP3/01.mp3` and `cd2/MP3/01.mp3` also get distinct disc
+  subfolders; they used to collide in a flat `Author/Title/` folder and the second disc was skipped.
+
 ## 3.0.0 - 2026-09-18
 
 First release of the fork. Every item of the roadmap in docs/FORK.md is included; outputs stay compatible with

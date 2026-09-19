@@ -268,10 +268,10 @@ def parseReleaseName(name, known_authors=(), file_name=None):
 
 def groupingName(fullPath, sourcePath, fallback):
     """The folder that identifies a book: the release under `sourcePath`, walking past cd/disc/disk/part N
-    parents. Two discs of one release become one book; two releases that both use `cd1/` stay separate.
-    Author/Title layouts still key on the immediate (non-disc) parent. A format folder under a disc
-    (`cd1/MP3/`) is skipped the same way. Falls back to `fallback` for a loose file or a path outside
-    the source."""
+    parents and codec folders (`MP3/`, `M4B/`, `cd1/MP3/`). Two discs of one release become one book;
+    two releases that both use `cd1/` or both use `MP3/` stay separate. Author/Title layouts still key
+    on the immediate (non-disc, non-codec) parent. Falls back to `fallback` for a loose file or a path
+    outside the source."""
     try:
         rel = os.path.relpath(fullPath, sourcePath) if sourcePath and fullPath else ""
     except ValueError:
@@ -283,9 +283,8 @@ def groupingName(fullPath, sourcePath, fallback):
         return fallback
     for i in range(len(parts) - 2, -1, -1):
         name = parts[i].strip()
-        # cd1/ itself, and a codec folder sitting under it (cd1/MP3/), are not the release
-        parent_is_disc = i > 0 and bool(DISC_FOLDER.match(parts[i - 1].strip()))
-        if DISC_FOLDER.match(name) or (parent_is_disc and FORMAT_FOLDER.match(name)):
+        # cd1/ itself, and a codec folder (Title/MP3/ or cd1/MP3/), are not the release
+        if DISC_FOLDER.match(name) or FORMAT_FOLDER.match(name):
             continue
         return parts[i]
     return parts[0]
