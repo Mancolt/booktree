@@ -95,7 +95,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | | in_series           | Format of the generated tree for books in a series | {author}/{series}/{series} #{part} - {title}   |
 | | in_series_no_part   | Format for books in a series whose part number is unknown (a novella collection, a companion book): `in_series` would render `{part}` empty and leave `Series # - Title`. Set it to your `in_series` value to keep that | {author}/{series}/{series} - {title}   |
 | | no_series           | Format of the generated tree for books that are NOT in a series | {author}/{title}    |
-| | disc_folder         | Format of the folder name for multi-disc books (files whose parent folder is `cd N`, `disc N`, `disk N` or `part N`) | {title} {disc}    |
+| | disc_folder         | Format of the folder name for multi-disc books (files whose parent folder is `cd N`, `disc N`, `disk N` or `part N`, including a codec folder under those: `cd1/MP3/`) | {title} {disc}    |
 | tokens      |         | |    |
 | | skip_series         | Used when fixid3 is true and an alt Title is generated from the id3-series data | 0   |
 | | kw_ignore           | Characters ignored when generating keywords for search | | [".", ":", "_", "[", "]", "{", "}", ",", ";", "(", ")"]    |
