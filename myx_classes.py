@@ -368,13 +368,10 @@ class BookFile:
             else:
                 narrator=""
 
-            #is this a MultiCd file? Walk past a codec folder under a disc (cd1/MP3/01.mp3) so
-            #two grouped discs with the same track names are not filed into one flat folder.
-            disc = self.getParentFolder()
-            if disc and myx_names.FORMAT_FOLDER.match(disc.strip()):
-                grand = os.path.basename(os.path.dirname(os.path.dirname(self.file or "")))
-                if grand and myx_utilities.isMultiCD(grand):
-                    disc = grand
+            #is this a MultiCd file? Walk past codec/bitrate wrappers under a disc
+            #(cd1/MP3/01.mp3, cd1/MP3/64k/01.mp3) so two grouped discs with the same
+            #track names are not filed into one flat folder.
+            disc = myx_names.discFolderFromPath(self.file) or self.getParentFolder()
             if (not myx_utilities.isMultiCD(disc)):
                 disc = ""
 
