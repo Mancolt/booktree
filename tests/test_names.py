@@ -408,8 +408,16 @@ class InSeriesNoPartTest(unittest.TestCase):
         # upstream #27: "Jack Reacher # - Three More Novellas"
         self.assertEqual(self.target(""), "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
         self.assertEqual(self.target("   "), "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
+        self.assertEqual(self.target(None), "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
         self.assertEqual(self.target("23.5"), "/lib/Lee Child/Jack Reacher/Jack Reacher #23.5 - Three More Novellas")
         self.assertEqual(self.target("3"), "/lib/Lee Child/Jack Reacher/Jack Reacher #3 - Three More Novellas")
+        self.assertEqual(self.target(5), "/lib/Lee Child/Jack Reacher/Jack Reacher #5 - Three More Novellas")
+
+    def test_series_part_none_or_int_does_not_crash_getSeriesPart(self):
+        import myx_classes
+        self.assertEqual(myx_classes.Series("Jack Reacher", None).getSeriesPart(), "Jack Reacher")
+        self.assertEqual(myx_classes.Series("Jack Reacher", 5).getSeriesPart(), "Jack Reacher 5")
+        self.assertEqual(myx_classes.Series("Jack Reacher", 5).part, "5")
 
     def test_template_is_configurable_and_the_old_layout_can_be_kept(self):
         self.assertEqual(self.target("", **{"Config/target_path/in_series_no_part": "{author}/{series}/{title}"}),

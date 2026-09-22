@@ -37,7 +37,13 @@ class Series:
     name:str=""
     part:str=""
     separator:str=""
-    
+
+    def __post_init__(self):
+        # Audible omits `sequence` or sends null for an unnumbered series entry; MAM may send the part as an
+        # int. Either must be an empty/string part so getSeriesPart and in_series_no_part do not crash or
+        # file the book as "Series #None - Title".
+        self.part = "" if self.part is None else str(self.part)
+
     def getSeriesPart(self):
         if (len(self.part.strip()) > 0):
             return f"{self.name} {self.separator}{str(self.part)}"

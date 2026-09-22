@@ -12,6 +12,9 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
   way it already walks past `MP3/` and `cd1/`. `cd1/MP3/64k/01.mp3` and `cd2/MP3/64k/01.mp3` also get
   distinct disc subfolders; they used to collide in a flat `Author/Title/` folder and the second disc
   was skipped.
+- An Audible series entry without a `sequence` (or MAM `series_info` with only the series name) aborted the
+  whole run in `product2Book` / `getMAMBook`. Unnumbered series entries now keep the series name and use
+  `in_series_no_part`; they no longer file as `Series #None - Title`.
 
 ## 3.0.2 - 2026-09-22
 

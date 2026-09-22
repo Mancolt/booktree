@@ -734,3 +734,35 @@ class DuplicateAttemptTest(unittest.TestCase):
         self.assertIsNone(best)
         queries = [(c[1].get("title"), c[1].get("author")) for c in client.calls]
         self.assertEqual(len(queries), len(set(queries)), queries)
+
+
+class UnnumberedSeriesTest(unittest.TestCase):
+    """Audible series.sequence is optional; requiring it aborted the run in _rankAudible."""
+
+    def test_product_with_series_but_no_sequence_is_usable(self):
+        import myx_audible
+        p = product("B0SERIES001", "Three More Novellas", ["Lee Child"], 240,
+                    series=[{"title": "Jack Reacher"}])
+        book = myx_audible.product2Book(p)
+        self.assertEqual([(s.name, s.part) for s in book.series], [("Jack Reacher", "")])
+        p = product("B0SERIES002", "Killing Floor", ["Lee Child"], 600,
+                    series=[{"title": "Jack Reacher", "sequence": None}])
+        book = myx_audible.product2Book(p)
+        self.assertEqual([(s.name, s.part) for s in book.series], [("Jack Reacher", "")])
+        p = product("B0SERIES003", "Die Trying", ["Lee Child"], 600,
+                    series=[{"title": "Jack Reacher", "sequence": 2}])
+        book = myx_audible.product2Book(p)
+        self.assertEqual([(s.name, s.part) for s in book.series], [("Jack Reacher", "2")])
+
+    def test_ranking_does_not_crash_when_a_hit_omits_sequence(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            hit = product("B0SERIES001", "Three More Novellas", ["Lee Child"], 240,
+                          series=[{"title": "Jack Reacher"}])
+            client = FakeAudible(search=[hit])
+            mb = mambook("Three More Novellas - Lee Child.m4b",
+                         id3_book("Three More Novellas", ["Lee Child"], 240 * 60))
+            best, _ = run(mb, client, cfg)
+        self.assertIsNotNone(best)
+        self.assertEqual(best.asin, "B0SERIES001")
+        self.assertEqual([(s.name, s.part) for s in best.series], [("Jack Reacher", "")])
