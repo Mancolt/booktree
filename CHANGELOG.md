@@ -6,7 +6,7 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
-## 3.0.3 - 2026-09-22
+## 3.0.4 - 2026-09-22
 
 ### Fixed
 - A series, title or part rendered as `..` (or `.`) by a target_path template was left alone by the filename
@@ -15,6 +15,8 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
   too), and the finished target path is checked against the media root before any file is linked or copied. In
   `metadata: log` mode the log's `paths` column, written by an earlier run or edited by hand, is checked the same
   way against the run's `Config/paths` media roots.
+
+## 3.0.3 - 2026-09-22
 
 ### Fixed
 - Two releases that both use a bitrate folder (`Title/64k/`, `Title/MP3/128kbps/`) were grouped as one
