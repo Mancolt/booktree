@@ -73,6 +73,136 @@ class PinnedAsinTest(unittest.TestCase):
         self.assertEqual(best.asin, "B0GVLGC2X8")     # found by the ordinary search instead
 
 
+class TaggedAsinFallbackTest(unittest.TestCase):
+    """A file whose tags carry an ASIN Audible has no product for (2026-09-22: "This Book Made Me Think of You" tagged
+    B0G2TK17DS, a skeleton on every marketplace) must still be found by its title and author, as a tagless file is."""
+
+    def setUp(self):
+        self.real = product("B0FBHZK5V7", "This Book Made Me Think of You", ["Libby Page"], 626)
+        self.id3 = id3_book("This Book Made Me Think of You", ["Libby Page"], 626.8 * 60, asin="B0G2TK17DS")
+
+    def test_dead_tagged_asin_falls_back_to_title_and_author_search(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={}, search=[self.real])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            best, out = run(mb, client, cfg)
+        self.assertIn("Ignoring Audible result B0G2TK17DS without a title (incomplete catalog entry)", out)
+        self.assertIn("Tagged ASIN B0G2TK17DS gave no usable Audible match; searching by title and author instead", out)
+        self.assertIsNotNone(best)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        # the dead ASIN is looked up once; the retry is a catalog search, never the same per-ASIN URL again
+        per_asin = [u for u, _ in client.calls if u.endswith("/B0G2TK17DS")]
+        self.assertEqual(len(per_asin), 1)
+        self.assertTrue(any(u.endswith("/catalog/products") and p.get("asin") == "" for u, p in client.calls))
+
+    def test_tagged_asin_pointing_at_another_book_falls_back_too(self):
+        # a live but wrong tag: the product exists, fails the title/author gate, and the search finds the real one
+        other = product("B0OTHER000", "The Memory Keeper of Kyiv", ["Erin Litteken"], 700)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0OTHER000": other}, search=[self.real])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b",
+                         id3_book("This Book Made Me Think of You", ["Libby Page"], 626.8 * 60, asin="B0OTHER000"))
+            best, out = run(mb, client, cfg)
+        self.assertIn("Tagged ASIN B0OTHER000 gave no usable Audible match", out)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+
+    def test_fallback_still_applies_the_usual_gates(self):
+        # the search returns a different book of the wrong length: the fallback must not accept it
+        wrong = product("B0WRONG000", "A Different Book", ["Someone Else"], 300)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={}, search=[wrong])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            best, out = run(mb, client, cfg)
+        self.assertIn("Tagged ASIN B0G2TK17DS gave no usable Audible match", out)
+        self.assertIsNone(best)
+
+    def test_fallback_is_recorded_in_the_attempt_label(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            best, _ = run(mb, FakeAudible(by_asin={}, search=[self.real]), cfg)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        self.assertTrue(mb.matchAttempt.startswith("asin-fallback:"), mb.matchAttempt)
+
+    def test_rerun_starts_from_the_original_tag_title_not_the_alt_title(self):
+        # empty tag title + dead ASIN: the first run's legacy rung derives an alt title from the release name and
+        # writes it into the tag Book (upstream behaviour); the fallback must search with the parsed title, not that
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={}, search=[self.real])
+            mb = mambook("Libby Page - This Book Made Me Think of You", id3_book("", ["unknown artist"], 626.8 * 60, asin="B0G2TK17DS"))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        searches = [p for u, p in client.calls if u.endswith("/catalog/products")]
+        self.assertTrue(searches)
+        self.assertEqual(searches[0]["title"], "This Book Made Me Think of You")
+
+    def test_dead_bracket_asin_in_the_release_name_falls_back_too(self):
+        # no ASIN tag; the release name carries one in brackets and the tags are junk, so the parse supplies it
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={}, search=[self.real])
+            mb = mambook("Libby Page - This Book Made Me Think of You [B0G2TK17DS]",
+                         id3_book("AudioTrack 01", ["unknown artist"], 626.8 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIn("Tagged ASIN B0G2TK17DS gave no usable Audible match", out)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        self.assertFalse(any(p.get("asin") for u, p in client.calls if u.endswith("/catalog/products")))
+
+    def test_interactive_mode_does_not_auto_accept_a_skeleton(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/flags/interactive": 1})
+            client = FakeAudible(by_asin={}, search=[self.real])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            best, out = run(mb, client, cfg)
+        self.assertIn("Ignoring Audible result B0G2TK17DS without a title", out)
+        self.assertIn("Tagged ASIN B0G2TK17DS gave no usable Audible match", out)
+        self.assertEqual(best.asin, "B0FBHZK5V7")       # lone real search result, auto-picked as before
+
+    def test_a_failed_lookup_does_not_fall_back(self):
+        # Audible unreachable for the per-ASIN call: the tag may be right, so no search that could file another
+        # edition; the book stays unmatched for the next run, as before the fallback existed
+        class Flaky(FakeAudible):
+            def get(self, url, params=None):
+                self.calls.append((url, dict(params or {})))
+                if not url.endswith("/catalog/products"):
+                    raise ConnectionError("audible down")
+                return super().get(url, params)
+        other_edition = product("B0OTHER000", "This Book Made Me Think of You", ["Libby Page"], 540)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = Flaky(by_asin={}, search=[other_edition])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertIn("Tagged ASIN B0G2TK17DS could not be looked up; leaving the book unmatched for the next run", out)
+        self.assertFalse(any(u.endswith("/catalog/products") for u, _ in client.calls))
+
+    def test_a_stale_match_from_an_earlier_search_does_not_mask_a_miss(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={}, search=[])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b", self.id3)
+            mb.bestAudibleMatch = myx_classes.Book(asin="B0STALE000", title="Stale")
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+
+    def test_live_tagged_asin_is_accepted_without_a_search(self):
+        # the common case is untouched: a good tag resolves on the first call and no catalog search is made
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0FBHZK5V7": self.real}, search=[])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b",
+                         id3_book("This Book Made Me Think of You", ["Libby Page"], 626.8 * 60, asin="B0FBHZK5V7"))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        self.assertNotIn("gave no usable Audible match", out)
+        self.assertFalse(any(u.endswith("/catalog/products") for u, _ in client.calls))
+
+
 class SkeletonResultTest(unittest.TestCase):
     def test_skeleton_search_result_is_skipped_not_compared_against_empty_strings(self):
         # upstream issue #25: "Checking if  or  matches my book ..." then a rejection

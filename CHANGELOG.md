@@ -6,6 +6,21 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+## 3.0.2 - 2026-09-22
+
+### Fixed
+- A file tagged with an ASIN that Audible has no product for (a withdrawn or duplicate listing answered with the
+  skeleton `{asin, asset_details, is_vvab}`), or one that points at a different book, was left unmatched: the
+  per-ASIN lookup ignores the title/author parameters and nothing else was tried. Such a file is now searched by
+  its title and author like a tagless one, through the same title/author and duration gates
+  (`Tagged ASIN X gave no usable Audible match; searching by title and author instead`). Pinned ASINs already
+  fell back this way. Seen 2026-09-22 with *This Book Made Me Think of You* tagged `B0G2TK17DS` (dead on every
+  marketplace); the fallback finds `B0FBHZK5V7`, duration difference 0 min. A live tag still resolves on the
+  first call with no extra query. Applies to a `[bracketed]` ASIN in the release name as well. The JSON run log
+  records such a match as `attempt: asin-fallback:<rung>`.
+- Interactive mode auto-accepted a skeleton per-ASIN answer as the lone result and would have filed the book
+  under an empty title; skeletons are now dropped before the choice is offered.
+
 ## 3.0.1 - 2026-09-19
 
 ### Fixed

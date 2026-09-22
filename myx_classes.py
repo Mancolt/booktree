@@ -702,7 +702,16 @@ class MAMBook:
                 print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
 
             if interactive:
-                #display choices to user to pick from
+                #display choices to user to pick from; a skeleton per-ASIN answer is not a choice (it would be
+                #auto-accepted as the lone result and file the book under an empty title)
+                usable = []
+                for product in books:
+                    abook = myx_audible.product2Book(product)
+                    if abook.title:
+                        usable.append(product)
+                    else:
+                        print(f"\tIgnoring Audible result {abook.asin} without a title (incomplete catalog entry)")
+                books = usable
                 count = len(books)
                 if (count == 1):
                     self.bestAudibleMatch=myx_audible.product2Book(books[0])
@@ -783,7 +792,45 @@ class MAMBook:
                     self.bestAudibleMatch=abook
         return self.bestAudibleMatch
 
-    def _audibleAttempts(self, book, cfg, searchAsin):
+    def _runAudibleAttempts(self, client, book, cfg, searchAsin, language, noAsin=False):
+        """Run the attempt ladder for `book` (with `searchAsin` on the attempts that carry an ASIN; `noAsin` strips
+        the release-name ASIN too) until one attempt yields a match. Sets bestAudibleMatch / matchAttempt; returns
+        (products of the last attempt made, the ASIN any attempt was directed at or "", whether Audible answered
+        that ASIN lookup: False when the request failed, so the caller can tell a dead ASIN from an outage)."""
+        add_narrators = bool(cfg.get("Config/flags/add_narrators"))
+        fixid3 = bool(cfg.get("Config/flags/fixid3"))
+        hintedTitle = bool(self.hint and self.hint.get("title"))
+        books = []
+        attempts = self._audibleAttempts(book, cfg, searchAsin, noAsin=noAsin)
+        usedAsin = next((sAsin for _, _, sAsin, _ in attempts if sAsin), "")
+        asinAnswered = False
+        for label, sBook, sAsin, requireTitle in attempts:
+            if label == "swapped":
+                print(f"No match; retrying with the release name read the other way round: title:{sBook.title!r} authors:{[a.name for a in sBook.authors]}")
+            elif label == "parsed-authors":
+                print(f"No match; retrying with the authors from the release name: {[a.name for a in sBook.authors]}")
+            elif label == "title-only":
+                print("No match; retrying the Audible search with the title only")
+            elif label == "legacy" and len(attempts) > 1:
+                print("No match; retrying with the file's own tags as before")
+            if label == "legacy" and ((len(sBook.title) == 0) or (fixid3)) and not hintedTitle:
+                #upstream: derive a title from the folder name when the tag is empty (mutates the tag title, as upstream did)
+                sBook.title = myx_utilities.getAltTitle (self.name, sBook, cfg)
+            keys = self._audibleSearchKeys(sBook, cfg)
+            if add_narrators:
+                books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], narrators=keys["narrators"], keywords=keys["keywords"], language=language, refresh=self.refresh)
+            else:
+                books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], keywords=keys["keywords"], language=language, refresh=self.refresh)
+            if sAsin and books:
+                asinAnswered = True             # a skeleton is an answer; an exception in getAudibleBook yields []
+            #title-only: the title is verified by the gate and no author is known to score with, so a runtime
+            #within tolerance is accepted on its own (pickBest requireRate=False)
+            if self._rankAudible(books, sBook, keys, cfg, requireTitle=requireTitle, runtimeAlone=(label == "title-only")) is not None:
+                self.matchAttempt = label
+                break
+        return books, usedAsin, asinAnswered
+
+    def _audibleAttempts(self, book, cfg, searchAsin, noAsin=False):
         """The ordered search attempts for a book: (label, Book to search with, asin, requireTitle).
 
         With usable tags (or with parsing disabled) there is exactly one attempt, upstream's. When the release
@@ -799,7 +846,7 @@ class MAMBook:
         if not (hintedTitle or hintedAuthors or interactive):
             parsedBook, parsedApplied = self.applyParsedName(book, cfg)
         if parsedApplied:
-            pAsin = parsedBook.asin if ("asin" in parsedApplied and not searchAsin) else searchAsin
+            pAsin = "" if noAsin else (parsedBook.asin if ("asin" in parsedApplied and not searchAsin) else searchAsin)
             # title OR authors from the release name: the author-only gate would accept that
             # author's other books (a leftover "James Patterson - The Guest" folder with a usable
             # id3 title "The Guest" used to file Patterson's Along Came a Spider)
@@ -856,6 +903,9 @@ class MAMBook:
                 searchAsin = ""
 
         hintCandidates = list(self.hint.get("candidates", [])) if self.hint else []
+        #_rankAudible returns bestAudibleMatch as it stands: a value left by an earlier search on this book would make
+        #the first rung of this one look like a match. Every caller reaches here to search afresh.
+        self.bestAudibleMatch = None
         if (book is not None):
             book = self.searchBookFromHint(book)
             language=book.language
@@ -872,29 +922,23 @@ class MAMBook:
                 if self._rankAudible(books, book, keys, cfg, hintCandidates=True) is not None:
                     self.matchAttempt = "candidates"
             else:
-                attempts = self._audibleAttempts(book, cfg, searchAsin)
-                for label, sBook, sAsin, requireTitle in attempts:
-                    if label == "swapped":
-                        print(f"No match; retrying with the release name read the other way round: title:{sBook.title!r} authors:{[a.name for a in sBook.authors]}")
-                    elif label == "parsed-authors":
-                        print(f"No match; retrying with the authors from the release name: {[a.name for a in sBook.authors]}")
-                    elif label == "title-only":
-                        print("No match; retrying the Audible search with the title only")
-                    elif label == "legacy" and len(attempts) > 1:
-                        print("No match; retrying with the file's own tags as before")
-                    if label == "legacy" and ((len(sBook.title) == 0) or (fixid3)) and not hintedTitle:
-                        #upstream: derive a title from the folder name when the tag is empty (mutates the tag title, as upstream did)
-                        sBook.title = myx_utilities.getAltTitle (self.name, sBook, cfg) 
-                    keys = self._audibleSearchKeys(sBook, cfg)
-                    if add_narrators:
-                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], narrators=keys["narrators"], keywords=keys["keywords"], language=language, refresh=self.refresh)
-                    else:
-                        books=myx_audible.getAudibleBook (client, cfg, asin=sAsin, title=keys["title"], authors=keys["authors"], keywords=keys["keywords"], language=language, refresh=self.refresh)
-                    #title-only: the title is verified by the gate and no author is known to score with, so a runtime
-                    #within tolerance is accepted on its own (pickBest requireRate=False)
-                    if self._rankAudible(books, sBook, keys, cfg, requireTitle=requireTitle, runtimeAlone=(label == "title-only")) is not None:
-                        self.matchAttempt = label
-                        break
+                origTitle = book.title                  # the legacy rung may overwrite it (getAltTitle); the rerun starts clean
+                books, usedAsin, asinAnswered = self._runAudibleAttempts(client, book, cfg, searchAsin, language)
+                if self.bestAudibleMatch is None and usedAsin and not asinAnswered:
+                    #the lookup itself failed (outage, timeout): the tag may well be right, and a search now could file
+                    #another edition of the same title for good. Leave the book for the next run, as before.
+                    print(f"Tagged ASIN {usedAsin} could not be looked up; leaving the book unmatched for the next run")
+                elif self.bestAudibleMatch is None and usedAsin:
+                    #The tag (or the [bracketed] release name) named an ASIN Audible has no usable product for (a
+                    #skeleton {asin, asset_details, is_vvab} answer: a withdrawn or duplicate listing) or one that fails
+                    #the title/author gate. The per-ASIN endpoint ignores the title/author parameters, so nothing else
+                    #was tried: search as for a file without an ASIN, through the same gates. Pinned ASINs already fall
+                    #back this way (acceptPinnedAsin).
+                    print(f"Tagged ASIN {usedAsin} gave no usable Audible match; searching by title and author instead")
+                    book.title = origTitle
+                    books, _, _ = self._runAudibleAttempts(client, book, cfg, "", language, noAsin=True)
+                    if self.bestAudibleMatch is not None:
+                        self.matchAttempt = f"asin-fallback:{self.matchAttempt}"
         #end if
 
         if (books is not None): 
