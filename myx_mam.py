@@ -212,8 +212,12 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
                 if ((not b["series_info"] is None) and len(b["series_info"])):
                     series_info = json.loads(b["series_info"])
                     for series in series_info.values():
+                        # a value that is not a list (null, a number, a bare string that list() would split into
+                        # letters) or one with no name is not a series entry: skip it rather than abort the run
+                        if not isinstance(series, (list, tuple)):
+                            continue
                         s=list(series)
-                        if not s:
+                        if not s or s[0] in (None, ""):
                             continue
                         seriesName = str(s[0])
                         seriesName = seriesName.replace("&#039;", "'")

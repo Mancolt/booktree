@@ -119,13 +119,19 @@ class MamThrottleTest(unittest.TestCase):
                 {"id": 3, "title": "Die Trying", "my_snatched": 1,
                  "author_info": '{"1": "Lee Child"}',
                  "series_info": '{"9": ["Jack Reacher", 2]}'},
-            ], "total": 3})
+                # entries that are not a series at all: null, a number, a bare string (list() would split it
+                # into letters), a null name; each is skipped, the book keeps its other series
+                {"id": 4, "title": "Tripwire", "my_snatched": 1,
+                 "author_info": '{"1": "Lee Child"}',
+                 "series_info": '{"9": null, "10": 5, "11": "Jack Reacher", "12": [null, "3"], "13": ["Jack Reacher", "3"]}'},
+            ], "total": 4})
             with contextlib.redirect_stdout(io.StringIO()):
                 books = myx_mam.getMAMBook(cfg, titleFilename="T.m4b", extension='"m4b"')
         self.assertEqual([(b.title, [(s.name, s.part) for s in b.series]) for b in books], [
             ("Three More Novellas", [("Jack Reacher", "")]),
             ("Killing Floor", [("Jack Reacher", "")]),
             ("Die Trying", [("Jack Reacher", "2")]),
+            ("Tripwire", [("Jack Reacher", "3")]),
         ])
 
     def test_unsnatched_answer_is_cached_but_filtered(self):
