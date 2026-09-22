@@ -6,6 +6,8 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+## 3.0.3 - 2026-09-22
+
 ### Fixed
 - A series, title or part rendered as `..` (or `.`) by a target_path template was left alone by the filename
   sanitiser and walked one level up: inside the media root with the default templates, outside it with a
