@@ -141,9 +141,13 @@ def product2Book(product):
         if 'publisher_name' in product: book.publisher=str(product["publisher_name"])
         if 'publication_datetime' in product: book.publishYear=str(product["publication_datetime"])
         if 'issue_date' in product: book.releaseDate=str(product["issue_date"])
-        if 'series' in product: 
-            for s in product["series"]:
-                book.series.append(myx_classes.Series(str(s["title"]), str(s["sequence"])))
+        if 'series' in product:
+            # sequence is optional: companion books and unnumbered series entries omit it or send null.
+            # Requiring the key crashed the whole run in _rankAudible; str(None) filed as "#None".
+            for s in product["series"] or []:
+                if not isinstance(s, dict) or not s.get("title"):
+                    continue
+                book.series.append(myx_classes.Series(str(s["title"]), s.get("sequence")))
         if 'language' in product: book.language=str(product ["language"])
         if 'category_ladders' in product:
             for cl in product["category_ladders"]:

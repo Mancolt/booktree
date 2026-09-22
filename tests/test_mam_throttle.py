@@ -104,6 +104,36 @@ class MamThrottleTest(unittest.TestCase):
         self.assertEqual(r2, [])                          # served from the (empty) cache entry
         self.assertEqual(posts_after_first, posts_after_second, "second identical search must not hit MAM")
 
+    def test_series_info_without_a_part_does_not_abort_the_run(self):
+        # MAM sends {"id": ["Name", "5"]} normally; an unnumbered series is ["Name"] or ["Name", null].
+        # s[1] used to IndexError (or become "None") and abort getMAMBook for every later book.
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            FakeSession.answer = _Resp(200, "x", {"data": [
+                {"id": 1, "title": "Three More Novellas", "my_snatched": 1,
+                 "author_info": '{"1": "Lee Child"}',
+                 "series_info": '{"9": ["Jack Reacher"]}'},
+                {"id": 2, "title": "Killing Floor", "my_snatched": 1,
+                 "author_info": '{"1": "Lee Child"}',
+                 "series_info": '{"9": ["Jack Reacher", null]}'},
+                {"id": 3, "title": "Die Trying", "my_snatched": 1,
+                 "author_info": '{"1": "Lee Child"}',
+                 "series_info": '{"9": ["Jack Reacher", 2]}'},
+                # entries that are not a series at all: null, a number, a bare string (list() would split it
+                # into letters), a null name; each is skipped, the book keeps its other series
+                {"id": 4, "title": "Tripwire", "my_snatched": 1,
+                 "author_info": '{"1": "Lee Child"}',
+                 "series_info": '{"9": null, "10": 5, "11": "Jack Reacher", "12": [null, "3"], "13": ["Jack Reacher", "3"]}'},
+            ], "total": 4})
+            with contextlib.redirect_stdout(io.StringIO()):
+                books = myx_mam.getMAMBook(cfg, titleFilename="T.m4b", extension='"m4b"')
+        self.assertEqual([(b.title, [(s.name, s.part) for s in b.series]) for b in books], [
+            ("Three More Novellas", [("Jack Reacher", "")]),
+            ("Killing Floor", [("Jack Reacher", "")]),
+            ("Die Trying", [("Jack Reacher", "2")]),
+            ("Tripwire", [("Jack Reacher", "3")]),
+        ])
+
     def test_unsnatched_answer_is_cached_but_filtered(self):
         with tempfile.TemporaryDirectory() as td:
             cfg = FakeConfig(td)

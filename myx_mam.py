@@ -212,10 +212,19 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
                 if ((not b["series_info"] is None) and len(b["series_info"])):
                     series_info = json.loads(b["series_info"])
                     for series in series_info.values():
+                        # a value that is not a list (null, a number, a bare string that list() would split into
+                        # letters) or one with no name is not a series entry: skip it rather than abort the run
+                        if not isinstance(series, (list, tuple)):
+                            continue
                         s=list(series)
+                        if not s or s[0] in (None, ""):
+                            continue
                         seriesName = str(s[0])
                         seriesName = seriesName.replace("&#039;", "'")
-                        book.series.append(myx_classes.Series(seriesName, s[1]))
+                        # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
+                        # and abort the run, or become "None" and file as "Series #None - Title"
+                        part = s[1] if len(s) > 1 else ""
+                        book.series.append(myx_classes.Series(seriesName, part))
             if 'lang_code' in b:
                 book.language=myx_utilities.getLanguage((b["lang_code"]))
             if 'my_snatched' in b:
