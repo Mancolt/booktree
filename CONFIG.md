@@ -292,6 +292,12 @@ match the next one runs, bounded and cached like any other query: the swapped re
 exactly as upstream performed it with the file's own tags, so a wrong parse can add a match but never lose one.
 The MAM ranking uses the same parsed values; the MAM query string is unchanged.
 
+An ASIN in the tags (or in `[brackets]` in the release name) is looked up directly first. When Audible has no
+product for it (a withdrawn or duplicate listing is answered with a bare `{asin, asset_details, is_vvab}` record)
+or the product fails the title/author gate, the file is searched by title and author as if it carried no ASIN,
+with the same gates and duration check; the log says `Tagged ASIN X gave no usable Audible match; searching by
+title and author instead`. A live tag is accepted on the first call and costs no extra query.
+
 
 ## Caching, MAM traffic, `--refresh`
 
