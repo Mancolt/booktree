@@ -413,19 +413,22 @@ class BookFile:
                 x = template.format (**tokens)
                 #use in_series format
                 for p in x.split ("/"):
-                    sPath=os.path.join (sPath, p.strip())
+                    sPath=os.path.join (sPath, myx_utilities.pathComponent(p))
             else:
                 y = no_series.format (**tokens)
                 #use no_series format
                 for p in y.split ("/"):
-                    sPath=os.path.join (sPath, p.strip())
+                    sPath=os.path.join (sPath, myx_utilities.pathComponent(p))
 
             #add disc for multidisc
             if len(disc):
                 z = disc_folder.format (**tokens)
-                sPath=os.path.join(sPath, z.strip())
+                for p in z.split ("/"):
+                    sPath=os.path.join(sPath, myx_utilities.pathComponent(p))
 
-            return os.path.join(media_path, sPath)  
+            #every component above went through pathComponent, so this cannot trip on metadata alone; it is the
+            #last line of defence (a folder already in the library that is a symlink to somewhere outside it).
+            return myx_utilities.assertUnderRoot(os.path.join(media_path, sPath), [media_path])
     
     def getTargetPaths(self, book, cfg):
         return self.getConfigTargetPath(cfg, book)
@@ -984,7 +987,11 @@ class MAMBook:
                 #UPDATED 8/30 to allow users to customize target_path formats  
                 p = ""
                 if ((metadata == "log") and self.isMatched):
+                    #the log's paths column is what an earlier run computed, possibly edited by the operator; it must
+                    #still lie under one of this run's media roots before anything is linked or copied there
                     p = self.paths
+                    if len(p):
+                        p = myx_utilities.assertUnderRoot(p, [e["media_path"] for e in (cfg.get("Config/paths") or []) if isinstance(e, dict) and e.get("media_path")] or [f.mediaPath])
                 
                 if (len(p) == 0):
                     p = f.getConfigTargetPath(cfg, self.metadataBook)

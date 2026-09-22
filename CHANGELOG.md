@@ -9,6 +9,14 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 ## 3.0.3 - 2026-09-22
 
 ### Fixed
+- A series, title or part rendered as `..` (or `.`) by a target_path template was left alone by the filename
+  sanitiser and walked one level up: inside the media root with the default templates, outside it with a
+  template of bare tokens such as `{series}/{part}/{title}`. Such a component now becomes `_` (in `disc_folder`
+  too), and the finished target path is checked against the media root before any file is linked or copied. In
+  `metadata: log` mode the log's `paths` column, written by an earlier run or edited by hand, is checked the same
+  way against the run's `Config/paths` media roots.
+
+### Fixed
 - Two releases that both use a bitrate folder (`Title/64k/`, `Title/MP3/128kbps/`) were grouped as one
   book named `64k` and hardlinked to the first match. Grouping now walks past bitrate folders the same
   way it already walks past `MP3/` and `cd1/`. `cd1/MP3/64k/01.mp3` and `cd2/MP3/64k/01.mp3` also get
