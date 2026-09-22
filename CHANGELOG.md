@@ -6,6 +6,8 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+## 3.0.3 - 2026-09-22
+
 ### Fixed
 - Two releases that both use a bitrate folder (`Title/64k/`, `Title/MP3/128kbps/`) were grouped as one
   book named `64k` and hardlinked to the first match. Grouping now walks past bitrate folders the same
