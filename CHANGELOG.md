@@ -6,6 +6,13 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- Two releases that both use a bitrate folder (`Title/64k/`, `Title/MP3/128kbps/`) were grouped as one
+  book named `64k` and hardlinked to the first match. Grouping now walks past bitrate folders the same
+  way it already walks past `MP3/` and `cd1/`. `cd1/MP3/64k/01.mp3` and `cd2/MP3/64k/01.mp3` also get
+  distinct disc subfolders; they used to collide in a flat `Author/Title/` folder and the second disc
+  was skipped.
+
 ## 3.0.2 - 2026-09-22
 
 ### Fixed
