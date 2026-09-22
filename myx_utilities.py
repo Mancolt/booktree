@@ -259,6 +259,26 @@ def removeGA (author:str):
     cleanAuthor = author.replace("GraphicAudio","").replace("[","").replace("]","")
     return cleanAuthor.strip()
 
+def pathComponent(p):
+    """One folder name rendered from a target_path template. pathvalidate's sanitize_filename leaves "." and ".."
+    alone, so a series or title of ".." from Audible/MAM (or a stray template) would walk out of the folder it
+    belongs in. Such a name becomes "_"; a name that is only dots is treated the same."""
+    p = p.strip()
+    if p and p.strip(".") == "":
+        return "_"
+    return p
+
+def assertUnderRoot(target, roots):
+    """Raise ValueError unless `target` (which need not exist yet) resolves to a path inside one of `roots`.
+    Both sides are resolved through symlinks, so a media root that is itself a symlink is fine and a folder
+    already inside the library that links elsewhere is not. A root of "/" contains everything."""
+    real = os.path.realpath(target)
+    for root in roots:
+        r = os.path.realpath(root)
+        if os.path.commonpath([r, real]) == r:
+            return target
+    raise ValueError(f"target path {target!r} is outside the media root(s) {list(roots)!r}")
+
 def cleanseSeries(series):
     #remove colons
     cleanSeries = series

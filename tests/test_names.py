@@ -1,5 +1,7 @@
 import os
 import unittest
+import unittest.mock
+import myx_utilities
 
 import myx_names as N
 from tests.support import FakeConfig
@@ -413,6 +415,43 @@ class InSeriesNoPartTest(unittest.TestCase):
         self.assertEqual(self.target("3"), "/lib/Lee Child/Jack Reacher/Jack Reacher #3 - Three More Novellas")
         self.assertEqual(self.target(5), "/lib/Lee Child/Jack Reacher/Jack Reacher #5 - Three More Novellas")
 
+    def test_dot_dot_components_cannot_leave_the_media_root(self):
+        # pathvalidate leaves "." and ".." alone; a series/title/part of ".." from Audible or MAM used to walk up a
+        # level (inside the root with the default templates, outside with a template of bare tokens)
+        import myx_classes
+        def target(series, title, part="", tmpl=None):
+            book = myx_classes.Book(asin="B000000001", title=title)
+            book.authors = [myx_classes.Contributor("Lee Child")]
+            book.series = [myx_classes.Series(series, part)]
+            over = {"Config/target_path/in_series_no_part": tmpl, "Config/target_path/in_series": tmpl} if tmpl else {}
+            cfg = FakeConfig("/tmp", **over)
+            return myx_classes.BookFile("x.m4b", "/dl/x.m4b", "/dl", "/lib").getConfigTargetPath(cfg, book)
+        self.assertEqual(target("..", "T"), "/lib/Lee Child/_/.. - T")           # ".. - T" is a name, not a traversal
+        self.assertEqual(target("S", ".", "3"), "/lib/Lee Child/S/S #3 - .")            # a dot inside a name is fine
+        self.assertEqual(target("..", "..", tmpl="{author}/{series}/{title}"), "/lib/Lee Child/_/_")
+        self.assertEqual(target("..", "..", "..", tmpl="{series}/{part}/{title}"), "/lib/_/_/_")
+        self.assertEqual(target("Jack Reacher", "Killing Floor", "1", tmpl="{series}/{part}/{title}"),
+                         "/lib/Jack Reacher/1/Killing Floor")
+        # a media root of "/" (or a symlink to it) and a sibling folder that merely shares a prefix are handled
+        book = myx_classes.Book(asin="B000000001", title="Killing Floor")
+        book.authors = [myx_classes.Contributor("Lee Child")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}"})
+        self.assertEqual(myx_classes.BookFile("x.m4b", "/dl/x.m4b", "/dl", "/").getConfigTargetPath(cfg, book),
+                         "/Lee Child/Killing Floor")
+        self.assertEqual(myx_classes.BookFile("x.m4b", "/dl/x.m4b", "/dl", "/lib/").getConfigTargetPath(cfg, book),
+                         "/lib/Lee Child/Killing Floor")
+        # disc_folder is split on "/" like the other templates (a bare-token disc template used to be one component)
+        noSeries = myx_classes.Book(asin="B000000001", title="..")
+        noSeries.authors = [myx_classes.Contributor("Lee Child")]
+        self.assertEqual(myx_classes.BookFile("Title/cd1/x.m4b", "/dl/Title/cd1/x.m4b", "/dl", "/lib").getConfigTargetPath(
+            FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                  "Config/target_path/disc_folder": "{disc}/{title}/.."}),
+            noSeries), "/lib/Lee Child/_/cd1/_/_")
+        # the last line of defence: a component that still escapes raises instead of returning a path outside the root
+        with unittest.mock.patch.object(myx_utilities, "pathComponent", lambda p: p.strip()):
+            with self.assertRaises(ValueError):
+                target("..", "..", "..", tmpl="{series}/{part}/{title}")
+
     def test_series_part_none_or_int_does_not_crash_getSeriesPart(self):
         import myx_classes
         self.assertEqual(myx_classes.Series("Jack Reacher", None).getSeriesPart(), "Jack Reacher")
@@ -427,3 +466,30 @@ class InSeriesNoPartTest(unittest.TestCase):
                          "/lib/Lee Child/Jack Reacher/Jack Reacher # - Three More Novellas")
         self.assertEqual(self.target("", **{"Config/target_path/in_series_no_part": ""}),       # blank = default
                          "/lib/Lee Child/Jack Reacher/Jack Reacher - Three More Novellas")
+
+
+class LogModePathContainmentTest(unittest.TestCase):
+    def test_log_paths_outside_every_media_root_are_refused(self):
+        # metadata=log links to the CSV's paths column as written by an earlier run (or edited by hand); a value
+        # that resolves outside this run's media roots is refused before anything is created there
+        import myx_classes, tempfile
+        with tempfile.TemporaryDirectory() as td:
+            lib, seed = os.path.join(td, "lib"), os.path.join(td, "seed")
+            os.makedirs(lib); os.makedirs(seed)
+            src = os.path.join(seed, "a.m4b"); open(src, "w").close()
+            book = myx_classes.MAMBook("Title")
+            bf = myx_classes.BookFile("a.m4b", src, seed, lib)
+            book.files = [bf]
+            book.isMatched = True
+            book.metadata = "audible"
+            book.bestAudibleMatch = myx_classes.Book(asin="B000000001", title="Title")
+            book.bestAudibleMatch.authors = [myx_classes.Contributor("Lee Child")]
+            cfg = FakeConfig(td, **{"Config/metadata": "log", "Config/flags/dry_run": 0, "Config/flags/hardlink": 1,
+                                    "Config/paths": [{"files": "*.m4b", "source_path": seed, "media_path": lib}]})
+            book.paths = os.path.join(lib, "..", "seed", "elsewhere")
+            with self.assertRaises(ValueError):
+                book.createHardLinks(cfg)
+            self.assertFalse(os.path.exists(os.path.join(seed, "elsewhere")))
+            book.paths = os.path.join(lib, "Lee Child", "Title")       # a normal log path is linked as before
+            book.createHardLinks(cfg)
+            self.assertTrue(os.path.exists(os.path.join(lib, "Lee Child", "Title", "a.m4b")))
