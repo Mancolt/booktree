@@ -134,6 +134,30 @@ class MamThrottleTest(unittest.TestCase):
             ("Tripwire", [("Jack Reacher", "3")]),
         ])
 
+    def test_author_info_null_or_already_decoded_does_not_abort_the_run(self):
+        # series_info and narrator_info were guarded for null in #24; author_info still did len(None)
+        # or json.loads(dict) and aborted getMAMBook for every later book. Radio / uncredited torrents
+        # send null; some answers already have the object decoded.
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            FakeSession.answer = _Resp(200, "x", {"data": [
+                {"id": 1, "title": "Radio Hour", "my_snatched": 1, "author_info": None},
+                {"id": 2, "title": "Killing Floor", "my_snatched": 1, "author_info": {"1": "Lee Child"}},
+                {"id": 3, "title": "Die Trying", "my_snatched": 1, "author_info": '{"1": "Lee Child", "2": null}'},
+                {"id": 4, "title": "Tripwire", "my_snatched": 1, "author_info": 5},
+                {"id": 5, "title": "The Visitor", "my_snatched": 1, "author_info": "not-json",
+                 "narrator_info": None, "series_info": {"9": ["Jack Reacher", "4"]}},
+            ], "total": 5})
+            with contextlib.redirect_stdout(io.StringIO()):
+                books = myx_mam.getMAMBook(cfg, titleFilename="T.m4b", extension='"m4b"')
+        self.assertEqual([(b.title, [a.name for a in b.authors], [s.name for s in b.series]) for b in books], [
+            ("Radio Hour", [], []),
+            ("Killing Floor", ["Lee Child"], []),
+            ("Die Trying", ["Lee Child"], []),
+            ("Tripwire", [], []),
+            ("The Visitor", [], ["Jack Reacher"]),
+        ])
+
     def test_unsnatched_answer_is_cached_but_filtered(self):
         with tempfile.TemporaryDirectory() as td:
             cfg = FakeConfig(td)

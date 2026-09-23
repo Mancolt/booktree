@@ -766,3 +766,34 @@ class UnnumberedSeriesTest(unittest.TestCase):
         self.assertIsNotNone(best)
         self.assertEqual(best.asin, "B0SERIES001")
         self.assertEqual([(s.name, s.part) for s in best.series], [("Jack Reacher", "")])
+
+    def test_product_with_null_authors_or_ladders_does_not_abort_ranking(self):
+        # series.sequence was hardened in #24; authors: null, an author without `name`, or
+        # category_ladders: null still TypeError/KeyError'd in product2Book and killed the run
+        import myx_audible
+        p = product("B0AUTHOR01", "Killing Floor", ["Lee Child"], 600)
+        p["authors"] = None
+        p["narrators"] = None
+        p["category_ladders"] = None
+        book = myx_audible.product2Book(p)
+        self.assertEqual(book.title, "Killing Floor")
+        self.assertEqual(book.authors, [])
+        p = product("B0AUTHOR02", "Die Trying", ["Lee Child"], 600)
+        p["authors"] = [{"asin": "B00AUTHOR"}, {"name": "Lee Child"}]
+        p["category_ladders"] = [{"ladder": None}, {"ladder": [{"name": "Mystery"}, {"name": "Thriller"}]}]
+        book = myx_audible.product2Book(p)
+        self.assertEqual([a.name for a in book.authors], ["Lee Child"])
+        self.assertEqual(book.genres, ["Mystery"])
+        self.assertEqual(book.tags, ["Thriller"])
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            hit = product("B0AUTHOR01", "Killing Floor", ["Lee Child"], 600)
+            hit["authors"] = None
+            hit["category_ladders"] = None
+            client = FakeAudible(search=[hit])
+            mb = mambook("Killing Floor - Lee Child.m4b",
+                         id3_book("Killing Floor", ["Lee Child"], 600 * 60))
+            best, _ = run(mb, client, cfg)
+        # no authors on the hit: the title gate still accepts it
+        self.assertIsNotNone(best)
+        self.assertEqual(best.asin, "B0AUTHOR01")

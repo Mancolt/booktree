@@ -6,6 +6,12 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- A MAM search hit with `author_info` null (or already a JSON object, or unparsable) aborted `getMAMBook`
+  for every later book. The same run-killing TypeError/KeyError happened in `product2Book` when Audible sent
+  `authors`/`narrators`/`category_ladders` as null or an entry without `name`. Those fields are skipped now,
+  the way `series_info` / `series.sequence` already were.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
