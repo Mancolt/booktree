@@ -132,11 +132,17 @@ def product2Book(product):
         if 'subtitle' in product: book.subtitle=str(product["subtitle"])
         if 'publisher_summary' in product: book.description=str(product["publisher_summary"])
         if 'runtime_length_min' in product: book.length=product["runtime_length_min"]
-        if 'authors' in product: 
-            for author in product["authors"]:
+        if 'authors' in product:
+            # null, a bare string, or an entry without `name` used to TypeError/KeyError in _rankAudible
+            # and abort the run; skip the bad entry the same way series already skips a missing title
+            for author in product["authors"] or []:
+                if not isinstance(author, dict) or not author.get("name"):
+                    continue
                 book.authors.append(myx_classes.Contributor(str(author["name"])))
-        if 'narrators' in product: 
-            for narrator in product["narrators"]:
+        if 'narrators' in product:
+            for narrator in product["narrators"] or []:
+                if not isinstance(narrator, dict) or not narrator.get("name"):
+                    continue
                 book.narrators.append(myx_classes.Contributor(str(narrator["name"])))
         if 'publisher_name' in product: book.publisher=str(product["publisher_name"])
         if 'publication_datetime' in product: book.publishYear=str(product["publication_datetime"])
@@ -150,9 +156,13 @@ def product2Book(product):
                 book.series.append(myx_classes.Series(str(s["title"]), s.get("sequence")))
         if 'language' in product: book.language=str(product ["language"])
         if 'category_ladders' in product:
-            for cl in product["category_ladders"]:
-                for i, item in enumerate(cl["ladder"]):
+            for cl in product["category_ladders"] or []:
+                if not isinstance(cl, dict):
+                    continue
+                for i, item in enumerate(cl.get("ladder") or []):
                     #the first one is genre, the rest are tags
+                    if not isinstance(item, dict) or not item.get("name"):
+                        continue
                     if (i==0):
                         book.genres.append(item["name"])
                     else:

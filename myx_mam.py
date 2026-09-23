@@ -183,6 +183,24 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
             
     return None
 
+def _mamJsonObject(value):
+    """MAM stores author_info / narrator_info / series_info as a JSON object string. Some answers send
+    the object already decoded, or null / a number / a bare string. Return a dict, or None to skip.
+    Never raise: one bad field used to abort getMAMBook for every later book."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
     books=[]
     mamBook=searchMAM(cfg, titleFilename, authors, extension, refresh=refresh)
@@ -195,36 +213,37 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
                 book.asin=str(b["asin"])
             if 'title' in b: 
                 book.title=str(b["title"])
-            if 'author_info'in b:
-                #format {id:author, id:author}
-                if len(b["author_info"]):
-                    authors = json.loads(b["author_info"])
-                    for author in authors.values():
-                        book.authors.append(myx_classes.Contributor(str(author)))
-            if 'narrator_info'in b:
-                #format {id:narrator, id:narrator}
-                if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
-                    narrators = json.loads(b["narrator_info"])
-                    for narrator in narrators.values():
-                        book.narrators.append(myx_classes.Contributor(str(narrator)))
-            if 'series_info'in b:
+            # format {id:author, id:author}. null / already-decoded object / bad JSON used to TypeError
+            # here (narrator_info and series_info were guarded for null in #24; author_info was not)
+            author_info = _mamJsonObject(b.get("author_info"))
+            if author_info:
+                for author in author_info.values():
+                    if author in (None, ""):
+                        continue
+                    book.authors.append(myx_classes.Contributor(str(author)))
+            narrator_info = _mamJsonObject(b.get("narrator_info"))
+            if narrator_info:
+                for narrator in narrator_info.values():
+                    if narrator in (None, ""):
+                        continue
+                    book.narrators.append(myx_classes.Contributor(str(narrator)))
+            series_info = _mamJsonObject(b.get("series_info"))
+            if series_info:
                 #format {"35598": ["Kat Dubois", "5"]}
-                if ((not b["series_info"] is None) and len(b["series_info"])):
-                    series_info = json.loads(b["series_info"])
-                    for series in series_info.values():
-                        # a value that is not a list (null, a number, a bare string that list() would split into
-                        # letters) or one with no name is not a series entry: skip it rather than abort the run
-                        if not isinstance(series, (list, tuple)):
-                            continue
-                        s=list(series)
-                        if not s or s[0] in (None, ""):
-                            continue
-                        seriesName = str(s[0])
-                        seriesName = seriesName.replace("&#039;", "'")
-                        # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
-                        # and abort the run, or become "None" and file as "Series #None - Title"
-                        part = s[1] if len(s) > 1 else ""
-                        book.series.append(myx_classes.Series(seriesName, part))
+                for series in series_info.values():
+                    # a value that is not a list (null, a number, a bare string that list() would split into
+                    # letters) or one with no name is not a series entry: skip it rather than abort the run
+                    if not isinstance(series, (list, tuple)):
+                        continue
+                    s=list(series)
+                    if not s or s[0] in (None, ""):
+                        continue
+                    seriesName = str(s[0])
+                    seriesName = seriesName.replace("&#039;", "'")
+                    # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
+                    # and abort the run, or become "None" and file as "Series #None - Title"
+                    part = s[1] if len(s) > 1 else ""
+                    book.series.append(myx_classes.Series(seriesName, part))
             if 'lang_code' in b:
                 book.language=myx_utilities.getLanguage((b["lang_code"]))
             if 'my_snatched' in b:
