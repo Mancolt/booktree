@@ -311,8 +311,11 @@ class BookFile:
                 self.isHardlinked=True
             except Exception as e:
                 print (f"\tFailed due to {e}")
+                self.isHardlinked=False
         else:
             print (f"\tSkipped : {filename} exists")
+            #already at the destination (a previous run, or a sibling disc that linked before one failed)
+            self.isHardlinked=True
                 
         return self.isHardlinked
     
@@ -333,8 +336,10 @@ class BookFile:
                 self.isHardlinked=True
             except Exception as e:
                 print (f"\tFailed due to {e}")
+                self.isHardlinked=False
         else:
             print (f"\tSkipped : {filename} exists")
+            self.isHardlinked=True
                 
         return self.isHardlinked
 
@@ -1009,11 +1014,14 @@ class MAMBook:
                     else:
                         #copy the file
                         f.copyFile(f.fullPath, p)
+                    #the processed marker means "in media_path"; a calibre ingest success must not hide a failed filing
+                    mediaFiled = f.isHardlinked
 
                     #setup Calibre Ingestion Path
                     if ((add2calibre) and len(calibre_path) > 0):
                         #hardlink the file
-                        f.hardlinkFile(f.fullPath, calibre_path)                   
+                        f.hardlinkFile(f.fullPath, calibre_path)
+                        f.isHardlinked = mediaFiled
 
                     #generate the OPF file
                     print (f"\tGenerating OPF file ...")

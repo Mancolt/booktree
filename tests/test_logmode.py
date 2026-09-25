@@ -152,6 +152,57 @@ class RefreshEndToEndTest(unittest.TestCase):
         self.assertEqual(len(booktree.httpx.calls) if hasattr(booktree.httpx, "calls") else 2, 2)
 
 
+class FailedFilingNotCachedTest(unittest.TestCase):
+    """A cross-device (or otherwise failed) hardlink must not write the never-expiring processed marker."""
+
+    def test_exdev_is_retried_on_the_next_run(self):
+        import myx_classes
+        import myx_hints
+        with tempfile.TemporaryDirectory() as td:
+            src, media = os.path.join(td, "src"), os.path.join(td, "media")
+            os.makedirs(os.path.join(src, "junk")); os.makedirs(media)
+            source_file = os.path.join(src, "junk", "AudioTrack 01.mp3")
+            open(source_file, "wb").write(b"\x00" * 16)
+            fix = os.path.join(td, "fix.csv")
+            row = dict.fromkeys(myx_utilities.getLogHeaders().keys(), "")
+            row.update({"book": "junk", "file": source_file, "isMatched": "False", "isHardLinked": "False", "mamCount": "0",
+                        "audibleMatchCount": "0", "metadatasource": "id3", "id3-matchRate": "0", "id3-asin": "B0CC3NZ34S",
+                        "id3-title": "AudioTrack 01", "id3-authors": "unknown artist", "id3-duration": str(492 * 60),
+                        "id3-language": "english", "sourcePath": src, "mediaPath": media})
+            with open(fix, "w", newline="", encoding="utf-8") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(myx_utilities.getLogHeaders().keys())); w.writeheader(); w.writerow(row)
+            saved_httpx = booktree.httpx
+            saved_link = myx_classes.os.link
+            booktree.httpx = FakeAudible(by_asin={"B0CC3NZ34S": product("B0CC3NZ34S", "The Coworker", ["Freida McFadden"], 492)})
+
+            def run_once():
+                myx_hints._cache.clear(); myx_hints._appliedRefresh.clear()
+                cfg = FakeConfig(td, **{"Config/metadata": "log", "Config/flags/verbose": 1})
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    booktree.buildTreeFromLog(fix, os.path.join(td, f"log{len(os.listdir(td))}.csv"), cfg)
+                return out.getvalue()
+
+            try:
+                def boom(*_a, **_k):
+                    raise OSError(18, "Invalid cross-device link")
+                myx_classes.os.link = boom
+                first = run_once()
+                dest = os.path.join(media, "Freida McFadden", "The Coworker", "AudioTrack 01.mp3")
+                self.assertFalse(os.path.exists(dest), first)
+                self.assertIn("Not marking junk as processed: filing failed; it will be retried next run", first)
+                self.assertNotIn("Skipping junk, already processed", first)
+                myx_classes.os.link = saved_link
+                second = run_once()
+                self.assertNotIn("Skipping junk, already processed", second)
+                self.assertIn("Pinned ASIN B0CC3NZ34S accepted", second)
+                self.assertTrue(os.path.exists(dest), second)
+                self.assertTrue(os.path.samefile(source_file, dest))
+            finally:
+                myx_classes.os.link = saved_link
+                booktree.httpx = saved_httpx
+
+
 class SeriesRoundTripTest(unittest.TestCase):
     """upstream #27: the log writes seriesparts as "Name part" (no '#'), the reader split on '#' and lost the part."""
 

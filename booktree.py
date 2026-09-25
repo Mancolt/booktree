@@ -126,16 +126,18 @@ def buildTreeFromLog(files, logfile, cfg):
             else:
                 print (f"Skipping {book[b].name}, already processed...")
 
-        # #Create Hardlinks
+        #         #Create Hardlinks
         print (f"\nCreating Hardlinks for {len(matchedFiles)} matched books")
         for mb in matchedFiles:
             hardlinkUnlessFiled(mb, cfg)
 
-            #cache this book - unless it's a dry run
-            if (not dryRun):
-                mb.cacheMe("book", str(book[b]), cfg)       
+            #the processed-book marker never expires: write it only when the book is actually in the library
+            if (not dryRun) and shouldWriteProcessedMarker(mb):
+                mb.cacheMe("book", str(book[b]), cfg)
+            elif not dryRun:
+                print(f"Not marking {mb.name} as processed: filing failed; it will be retried next run")
 
-            myx_utilities.printDivider()      
+            myx_utilities.printDivider()
         
         #Logging processed files
         print (f"\nLogging {len(allFiles)} processed books")
@@ -331,9 +333,11 @@ def buildTreeFromHybridSources(path, mediaPath, files, logfile, cfg):
     print (f"\nCreating Hardlinks for {len(matchedFiles)} matched books\n")
     for mb in matchedFiles:
         hardlinkUnlessFiled(mb, cfg)
-        #cache this book - unless it's a dry run
-        if (not dryRun):
+        #the processed-book marker never expires: write it only when the book is actually in the library
+        if (not dryRun) and shouldWriteProcessedMarker(mb):
             mb.cacheMe("book", str(book[b]), cfg)
+        elif not dryRun:
+            print(f"Not marking {mb.name} as processed: filing failed; it will be retried next run")
 
         myx_utilities.printDivider()
 
@@ -415,6 +419,17 @@ def refreshRequested(hints, fullpath, root):
         if hint and hint.get("refresh"):
             return True
     return False
+
+
+def shouldWriteProcessedMarker(mb):
+    """True when the never-expiring `__cache__/book` marker may be written.
+
+    A failed hardlink (typical: `source_path` and `media_path` on different filesystems, EXDEV) used to
+    cache the book anyway; the next run skipped it and the files never reached the library. Deduped books
+    (`alreadyFiled`) are already in a library and should stay marked processed."""
+    if getattr(mb, "alreadyFiled", None):
+        return True
+    return bool(mb.files) and all(f.isHardlinked for f in mb.files)
 
 
 def hardlinkUnlessFiled(mb, cfg):

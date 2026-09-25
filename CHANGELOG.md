@@ -6,6 +6,13 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- A matched book whose hardlink (or copy) failed — typically `source_path` and `media_path` on different
+  filesystems (`EXDEV`) — was still given the never-expiring processed-book marker. Later runs printed
+  `Skipping: … already processed` and the files never reached the library. The marker is now written only
+  when every file was filed, or when `dedupe_roots` already has the release; a failed filing is retried
+  next run.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
