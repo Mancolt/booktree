@@ -490,5 +490,84 @@ class LibraryTest(unittest.TestCase):
         self.assertIsNone(myx_library.validateAbs(self.cfg(**{"Config/abs/url": "http://abs.example", "Config/abs/scan": 0})))
 
 
+class ProcessedMarkerTest(unittest.TestCase):
+    """The __cache__/book marker never expires; write it only when the book is actually in the library."""
+
+    def test_failed_hardlink_is_not_marked_processed_already_filed_is(self):
+        import booktree
+        import myx_classes
+        mb = myx_classes.MAMBook("Some Book")
+        self.assertFalse(booktree.shouldWriteProcessedMarker(mb))          # no files
+        bf = myx_classes.BookFile("book.m4b", "/dl/book.m4b", "/dl", "/lib")
+        mb.files.append(bf)
+        self.assertFalse(booktree.shouldWriteProcessedMarker(mb))          # hardlink/copy failed
+        bf.isHardlinked = True
+        self.assertTrue(booktree.shouldWriteProcessedMarker(mb))
+        bf2 = myx_classes.BookFile("cd2.m4b", "/dl/cd2.m4b", "/dl", "/lib")
+        mb.files.append(bf2)
+        self.assertFalse(booktree.shouldWriteProcessedMarker(mb))          # one disc failed
+        mb.alreadyFiled = "/lib/Author/Some Book"
+        bf.isHardlinked = bf2.isHardlinked = False
+        self.assertTrue(booktree.shouldWriteProcessedMarker(mb))           # dedupe: already in a library
+
+    def test_dest_exists_and_stale_flag_and_calibre_do_not_lie(self):
+        # dest already there counts as filed (a sibling disc linked last run); a stale isHardLinked=True
+        # from the log is cleared on EXDEV; a calibre ingest success must not hide a media-path failure.
+        import booktree
+        import myx_classes
+        with tempfile.TemporaryDirectory() as td:
+            src, media, calibre = os.path.join(td, "src"), os.path.join(td, "media"), os.path.join(td, "calibre")
+            os.makedirs(src); os.makedirs(media); os.makedirs(calibre)
+            source = os.path.join(src, "book.m4b")
+            open(source, "wb").write(b"\x00" * 16)
+            match = myx_classes.Book(asin=ASIN, title="Title")
+            match.authors = [myx_classes.Contributor("Lee Child")]
+            cfg = FakeConfig(td, **{"Config/flags/hardlink": 1, "Config/flags/no_opf": 1})
+
+            dest = os.path.join(media, "Lee Child", "Title", "book.m4b")
+            os.makedirs(os.path.dirname(dest))
+            os.link(source, dest)
+            bf = myx_classes.BookFile("book.m4b", source, src, media)
+            mb = myx_classes.MAMBook("Title")
+            mb.files.append(bf)
+            mb.bestAudibleMatch = mb.metadataBook = match
+            mb.metadata = "audible"
+            with contextlib.redirect_stdout(io.StringIO()):
+                mb.createHardLinks(cfg)
+            self.assertTrue(bf.isHardlinked)
+            self.assertTrue(booktree.shouldWriteProcessedMarker(mb))
+
+            os.remove(dest)
+            bf.isHardlinked = True                    # as buildTreeFromLog would set from isHardLinked=True
+            saved = myx_classes.os.link
+            try:
+                myx_classes.os.link = lambda *_a, **_k: (_ for _ in ()).throw(OSError(18, "Invalid cross-device link"))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    mb.createHardLinks(cfg)
+            finally:
+                myx_classes.os.link = saved
+            self.assertFalse(bf.isHardlinked)
+            self.assertFalse(booktree.shouldWriteProcessedMarker(mb))
+
+            cfg = FakeConfig(td, **{"Config/flags/hardlink": 1, "Config/flags/no_opf": 1,
+                                    "Config/flags/ingest_calibre": 1,
+                                    "Config/target_path/calibre_ingest_path": calibre})
+            real_link = os.link
+            def link_only_calibre(src_path, dst_path):
+                if dst_path.startswith(calibre):
+                    return real_link(src_path, dst_path)
+                raise OSError(18, "Invalid cross-device link")
+            try:
+                myx_classes.os.link = link_only_calibre
+                with contextlib.redirect_stdout(io.StringIO()):
+                    mb.createHardLinks(cfg)
+            finally:
+                myx_classes.os.link = saved
+            self.assertTrue(os.path.exists(os.path.join(calibre, "book.m4b")))
+            self.assertFalse(os.path.exists(dest))
+            self.assertFalse(bf.isHardlinked)
+            self.assertFalse(booktree.shouldWriteProcessedMarker(mb))
+
+
 if __name__ == "__main__":
     unittest.main()

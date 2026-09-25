@@ -191,7 +191,10 @@ the behaviour is unchanged: the first highest score wins.
 ## Correcting a match
 
 booktree processes a release once: after a match is filed, a processed marker is written for that release
-(`__cache__/book/...`, no expiry) and later runs print `Skipping: ... already processed`. booktree never reads or
+(`__cache__/book/...`, no expiry) and later runs print `Skipping: ... already processed`. A hardlink or copy
+that fails (the usual case is `source_path` and `media_path` on different filesystems) is not a filing: the
+marker is not written and the release is retried next run. Hardlinks require both paths on the same
+filesystem; set `flags/hardlink` to `0` to copy instead. booktree never reads or
 writes Audiobookshelf's database; it only creates the folder, the hardlinks and a `metadata.opf` at filing time.
 So a wrong match is not re-applied on the next run, and a correction is never undone by booktree.
 
