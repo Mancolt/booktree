@@ -613,6 +613,42 @@ class ParsedAuthorsMamRankingTest(unittest.TestCase):
         self.assertIn("This book doesn't have a matching title or author", out)
 
 
+class MamRankingWithoutVerboseTest(unittest.TestCase):
+    """MAM ranking must run when Config/flags/verbose is off (it used to sit under that print)."""
+
+    def _run(self, name, id3, hits, verbose=0):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td, **{"Config/flags/verbose": verbose})
+            mb = mambook(name, id3)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), patch("myx_mam.getMAMBook", return_value=hits):
+                best = mb.getMAMBooks(cfg, mb.files[0])
+        return mb, best, out.getvalue()
+
+    def test_snatched_hit_is_accepted_when_verbose_is_off(self):
+        mb, best, out = self._run(
+            "Lee Child - Night School",
+            id3_book("Night School", ["Lee Child"], 400 * 60),
+            [_mam_book("Night School", ["Lee Child"])],
+        )
+        self.assertIsNotNone(best)
+        self.assertEqual(best.title, "Night School")
+        self.assertTrue(mb.matchFound())
+        self.assertIn("Finding the best MAM match", out)
+        self.assertNotIn("Found 1 MAM match(es)", out)
+
+    def test_wrong_title_is_still_rejected_when_verbose_is_off(self):
+        # unknown artist -> authors come from the release name, so the title gate applies
+        mb, best, out = self._run(
+            "Lee Child - The Enemy",
+            id3_book("The Enemy", ["unknown artist"], 400 * 60),
+            [_mam_book("Killing Floor", ["Lee Child"])],
+        )
+        self.assertIsNone(best)
+        self.assertFalse(mb.matchFound())
+        self.assertIn("This book doesn't have a matching title or author", out)
+
+
 class NarratorInArtistTagTest(unittest.TestCase):
     def secrets(self):
         return [product("B0BYRNE000", "The Secret", ["Rhonda Byrne"], 264),
