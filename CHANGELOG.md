@@ -6,6 +6,11 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- MAM ranking (and interactive pick) sat under `Config/flags/verbose`, so a run with verbose off left
+  `bestMAMMatch` unset even when MAM returned snatched hits. `metadata=mam` then filed nothing;
+  `mam-audible` skipped MAM and foreign-language detection. Ranking now runs the same way as Audible's.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
