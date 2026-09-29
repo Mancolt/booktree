@@ -1,11 +1,14 @@
 """MAMBook.getAudibleBooks with a canned, offline Audible: pinned ASINs, hinted candidates, duration ranking."""
 import ast
 import contextlib
+import csv
 import io
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
 
+import booktree
 import myx_classes
 import myx_hints
 from tests.support import FakeAudible, FakeConfig, product, write_json
@@ -766,3 +769,63 @@ class UnnumberedSeriesTest(unittest.TestCase):
         self.assertIsNotNone(best)
         self.assertEqual(best.asin, "B0SERIES001")
         self.assertEqual([(s.name, s.part) for s in best.series], [("Jack Reacher", "")])
+
+
+class MamAudibleFallbackTest(unittest.TestCase):
+    """Default metadata=mam-audible passes bestMAMMatch into getAudibleBooks. When MAM found
+    nothing that used to be None, and getAudibleBooks(None) never searches — a file with good
+    id3 tags stayed unmatched. Fall back to the file's tags like metadata=audible."""
+
+    def test_getAudibleBooks_with_none_and_no_pin_never_searches(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0CC3NZ34S", "The Coworker", ["Freida McFadden"], 492)])
+            mb = mambook("The Coworker", id3_book("The Coworker", ["Freida McFadden"], 492 * 60))
+            with contextlib.redirect_stdout(io.StringIO()):
+                best = mb.getAudibleBooks(client, None, cfg)
+        self.assertIsNone(best)
+        self.assertEqual(client.calls, [])
+
+    def test_hybrid_mam_audible_matches_from_id3_when_mam_misses(self):
+        # one folder deep so isMultiBookCollection is false and we take the mam-audible branch
+        with tempfile.TemporaryDirectory() as td:
+            src, media = os.path.join(td, "src"), os.path.join(td, "media")
+            os.makedirs(os.path.join(src, "The Coworker"))
+            os.makedirs(media)
+            source_file = os.path.join(src, "The Coworker", "book.m4b")
+            with open(source_file, "wb") as fh:
+                fh.write(b"\x00" * 16)
+
+            def fake_ffprobe(self, parent):
+                book = id3_book("The Coworker", ["Freida McFadden"], 492 * 60)
+                self.ffprobeBook = book
+                return book
+
+            def fake_mam(self, cfg, bookFile):
+                self.mamMatches = []
+                return None
+
+            cfg = FakeConfig(td, **{"Config/metadata": "mam-audible", "Config/flags/no_cache": 1})
+            client = FakeAudible(search=[product("B0CC3NZ34S", "The Coworker", ["Freida McFadden"], 492)])
+            saved = booktree.httpx
+            booktree.httpx = client
+            logfile = os.path.join(td, "booktree_log_test.csv")
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), \
+                        patch.object(myx_classes.BookFile, "ffprobe", fake_ffprobe), \
+                        patch.object(myx_classes.MAMBook, "getMAMBooks", fake_mam):
+                    booktree.buildTreeFromHybridSources(src, media, ["**/*.m4b"], logfile, cfg)
+            finally:
+                booktree.httpx = saved
+
+            with open(logfile, newline="", encoding="utf-8") as fh:
+                rows = list(csv.DictReader(fh))
+            text = out.getvalue()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["isMatched"], "True")
+        self.assertEqual(rows[0]["metadatasource"], "audible")
+        self.assertEqual(rows[0]["adb-asin"], "B0CC3NZ34S")
+        self.assertEqual(rows[0]["adb-title"], "The Coworker")
+        self.assertTrue(any(u.endswith("/catalog/products") for u, _ in client.calls), client.calls)
+        self.assertIn("Creating Hardlinks for 1 matched books", text)

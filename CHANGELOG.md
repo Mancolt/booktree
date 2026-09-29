@@ -6,6 +6,12 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- Default `mam-audible` passed `bestMAMMatch` into the Audible search even when MAM found nothing.
+  `getAudibleBooks(None)` never searches, so a file with usable id3 tags stayed unmatched (unless a
+  pin supplied an ASIN). A MAM miss now falls back to the file's tags, the same way `metadata=audible`
+  already did. Replay already used this fallback.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
