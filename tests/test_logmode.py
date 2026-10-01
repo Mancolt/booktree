@@ -190,3 +190,113 @@ class SeriesRoundTripTest(unittest.TestCase):
         b = myx_classes.Book()
         b.setSeriesFromLog("", "")
         self.assertEqual(b.series, [])
+
+
+class LogModeMultiDiscCacheTest(unittest.TestCase):
+    """#15 logs both discs under the release folder name. Log mode caches by that name, so the
+    second row was `Skipping: … already processed` and cd2 never reached the library."""
+
+    def _guest_row(self, src, media, src_file, dest):
+        row = dict.fromkeys(myx_utilities.getLogHeaders().keys(), "")
+        row.update({
+            "book": "The Guest", "file": src_file, "paths": dest,
+            "isMatched": "True", "isHardLinked": "False", "mamCount": "0",
+            "audibleMatchCount": "1", "metadatasource": "audible",
+            "adb-asin": "B0GUEST0001", "adb-title": "The Guest", "adb-authors": "Lee Child",
+            "adb-series": "Jack Reacher", "adb-seriesparts": "Jack Reacher 2",
+            "adb-language": "english", "sourcePath": src, "mediaPath": media,
+            "id3-title": "AudioTrack 01", "id3-authors": "unknown artist",
+            "id3-duration": str(200 * 60), "id3-language": "english",
+        })
+        return row
+
+    def test_second_disc_of_a_logged_release_is_filed(self):
+        # cacheMe runs after every row's isCached check, so a single two-row run
+        # files both discs even with the old name-only key. The skip is the next
+        # run: a name-only marker from cd1 (or a prior hybrid pass) hid cd2.
+        import myx_hints
+        with tempfile.TemporaryDirectory() as td:
+            src, media = os.path.join(td, "src"), os.path.join(td, "media")
+            for disc in ("cd1", "cd2"):
+                os.makedirs(os.path.join(src, "The Guest", disc))
+            os.makedirs(media)
+            files, dests = [], []
+            for disc in ("cd1", "cd2"):
+                path = os.path.join(src, "The Guest", disc, "01.mp3")
+                with open(path, "wb") as fh:
+                    fh.write(b"\x00" * 16)
+                files.append(path)
+                dests.append(os.path.join(
+                    media, "Lee Child", "Jack Reacher", "Jack Reacher #2 - The Guest", f"The Guest {disc}"))
+            fix = os.path.join(td, "fix.csv")
+
+            def write_rows(rows):
+                with open(fix, "w", newline="", encoding="utf-8") as fh:
+                    w = csv.DictWriter(fh, fieldnames=list(myx_utilities.getLogHeaders().keys()))
+                    w.writeheader()
+                    w.writerows(rows)
+
+            def run_log():
+                myx_hints._cache.clear()
+                cfg = FakeConfig(td, **{"Config/metadata": "log"})
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    booktree.buildTreeFromLog(fix, os.path.join(td, f"booktree_log_{len(os.listdir(td))}.csv"), cfg)
+                return out.getvalue()
+
+            write_rows([self._guest_row(src, media, files[0], dests[0])])
+            first = run_log()
+            self.assertTrue(os.path.exists(os.path.join(dests[0], "01.mp3")), first)
+            self.assertFalse(os.path.exists(os.path.join(dests[1], "01.mp3")), first)
+
+            write_rows([self._guest_row(src, media, files[0], dests[0]),
+                        self._guest_row(src, media, files[1], dests[1])])
+            second = run_log()
+            linked = [os.path.join(dest, "01.mp3") for dest in dests]
+            self.assertTrue(os.path.exists(linked[0]), second)
+            self.assertTrue(os.path.exists(linked[1]), second)
+            self.assertTrue(os.path.samefile(files[0], linked[0]))
+            self.assertTrue(os.path.samefile(files[1], linked[1]))
+            self.assertIn("Skipping The Guest, already processed", second)
+            self.assertIn("Creating Hardlinks for 1 matched books", second)
+
+    def test_already_matched_series_uses_the_series_column_not_seriesparts(self):
+        """#18 taught setSeriesFromLog to pair series + seriesparts; log mode still called
+        setSeries(adb-seriesparts), so a blanked paths column filed as 'Series 17.5 - Title'."""
+        import myx_hints
+        with tempfile.TemporaryDirectory() as td:
+            src, media = os.path.join(td, "src"), os.path.join(td, "media")
+            os.makedirs(os.path.join(src, "novella"))
+            os.makedirs(media)
+            source_file = os.path.join(src, "novella", "book.m4b")
+            with open(source_file, "wb") as fh:
+                fh.write(b"\x00" * 16)
+            fix = os.path.join(td, "fix.csv")
+            row = dict.fromkeys(myx_utilities.getLogHeaders().keys(), "")
+            row.update({
+                "book": "novella", "file": source_file, "paths": "",
+                "isMatched": "True", "isHardLinked": "False", "mamCount": "0",
+                "audibleMatchCount": "1", "metadatasource": "audible",
+                "adb-asin": "B0PIKE1750", "adb-title": "The Honeymoon Heist",
+                "adb-authors": "Brad Taylor", "adb-series": "Pike Logan",
+                "adb-seriesparts": "Pike Logan 17.5", "adb-language": "english",
+                "sourcePath": src, "mediaPath": media,
+                "id3-title": "The Honeymoon Heist", "id3-authors": "Brad Taylor",
+                "id3-duration": str(180 * 60), "id3-language": "english",
+            })
+            with open(fix, "w", newline="", encoding="utf-8") as fh:
+                w = csv.DictWriter(fh, fieldnames=list(myx_utilities.getLogHeaders().keys()))
+                w.writeheader()
+                w.writerow(row)
+            myx_hints._cache.clear()
+            cfg = FakeConfig(td, **{"Config/metadata": "log"})
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                booktree.buildTreeFromLog(fix, os.path.join(td, "booktree_log_series.csv"), cfg)
+            dest = os.path.join(media, "Brad Taylor", "Pike Logan", "Pike Logan #17.5 - The Honeymoon Heist")
+            self.assertTrue(os.path.exists(os.path.join(dest, "book.m4b")), out.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(media, "Brad Taylor", "Pike Logan 17.5")))
+            with open(os.path.join(dest, "metadata.opf"), encoding="utf-8") as fh:
+                opf = fh.read()
+            self.assertIn("content='Pike Logan'", opf)
+            self.assertIn("content='17.5'", opf)

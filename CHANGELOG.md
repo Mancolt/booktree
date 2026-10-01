@@ -6,6 +6,16 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- In `metadata: log` mode each CSV row is processed on its own, but the never-expiring processed marker
+  was keyed only on the `book` column. After grouping discs under the release folder (#15) a later run
+  (or a name-only marker from a prior hybrid pass) printed `Skipping: … already processed` for every
+  remaining disc, so `cd2` never reached the library. The marker is now per release+file.
+- The same log reader still rebuilt Audible/MAM series with `setSeries(seriesparts)` (splits on `#`).
+  `#18` already paired `series` + `seriesparts` for the id3 columns; without that, a matched row whose
+  `paths` was blanked (the documented re-pin workflow) filed as `Series 17.5 - Title` and wrote that
+  name into `metadata.opf`.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed

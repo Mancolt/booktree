@@ -66,6 +66,9 @@ def buildTreeFromLog(files, logfile, cfg):
                             book[hashKey].paths = (str(row["paths"]))
                             book[hashKey].isMatched = (str(row["isMatched"]).lower() == "true")
                             book[hashKey].files.append(bf)
+                            # each log row is its own work item (CONFIG: fill pins on every row). Cache by
+                            # release + file, not release alone: #15 writes the same `book` for every disc.
+                            book[hashKey].cacheKey = f"{row['book']}|{fullpath}"
                             book[hashKey].ffprobeBook = book[hashKey].files[0].ffprobeBook
                             #an ASIN in the input log is an explicit instruction (fix.csv): authoritative, even
                             #when the id3 title/author disagree with the Audible product
@@ -77,12 +80,12 @@ def buildTreeFromLog(files, logfile, cfg):
                                     book[hashKey].bestAudibleMatch = myx_classes.Book(asin=str(row["adb-asin"]), title=str(row["adb-title"]), subtitle=row["adb-subtitle"], publisher=row["adb-publisher"], length=row["adb-length"], duration=row["adb-duration"], language=row["adb-language"])
                                     book[hashKey].bestAudibleMatch.setAuthors(row["adb-authors"])
                                     book[hashKey].bestAudibleMatch.setNarrators(row["adb-narrators"])
-                                    book[hashKey].bestAudibleMatch.setSeries(row["adb-seriesparts"])                                
+                                    book[hashKey].bestAudibleMatch.setSeriesFromLog(row.get("adb-series", ""), row["adb-seriesparts"])
                                 elif book[hashKey].metadata == "mam":
                                     book[hashKey].bestMAMMatch = myx_classes.Book(asin=str(row["mam-asin"]), title=str(row["mam-title"]), subtitle=row["mam-subtitle"], publisher=row["mam-publisher"], length=row["mam-length"], duration=row["mam-duration"], language=row["mam-language"])
                                     book[hashKey].bestMAMMatch.setAuthors(row["mam-authors"])
                                     book[hashKey].bestMAMMatch.setNarrators(row["mam-narrators"])
-                                    book[hashKey].bestMAMMatch.setSeries(row["mam-seriesparts"])                                
+                                    book[hashKey].bestMAMMatch.setSeriesFromLog(row.get("mam-series", ""), row["mam-seriesparts"])
 
                     i += 1
             except csv.Error as e:
