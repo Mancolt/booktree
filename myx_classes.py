@@ -472,6 +472,14 @@ class MAMBook:
     parsedName:dict=None
     refresh:bool=False
     matchAttempt:str=""
+    cacheKey:str=""
+
+    def getHashKey(self):
+        # log mode processes each CSV row on its own but used to cache by release name only, so the
+        # second disc of a #15-grouped book (same `book` column) was skipped as already processed
+        if self.cacheKey:
+            return myx_utilities.getHash(self.cacheKey)
+        return myx_utilities.getHash(self.name)
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
@@ -1188,9 +1196,6 @@ class MAMBook:
         else: 
             return None
     
-    def getHashKey(self):
-        return myx_utilities.getHash(self.name)
-
     def isCached(self, category, cfg):
         return myx_utilities.isCached(self.getHashKey(),category, cfg)
         
