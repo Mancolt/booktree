@@ -315,16 +315,18 @@ def discFolderFromPath(file_path):
 
 
 def releaseNameForBook(files, sourcePath, name):
-    """The best name to parse for a book: the first path component under the source path (the release folder,
-    or the loose file name). Falls back to `name` (booktree's grouping key)."""
+    """The best name to parse for a book: the same folder groupingName uses as the book key.
+
+    The first path component under the source is the release only for `Release/file` and
+    `Release/cd1/file`. For `Author/Title/file` or a category folder (`completed/Release/file`)
+    that component is the author or `completed`, and a junk-tag search would use it as the title.
+    Walks past cd/disc/part and codec/bitrate wrappers like grouping does. Falls back to `name`
+    (booktree's grouping key) for a loose file or a path outside the source."""
     for f in files:
         full = getattr(f, "fullPath", None) or ""
-        try:
-            rel = os.path.relpath(full, sourcePath) if sourcePath and full else ""
-        except ValueError:
-            rel = ""
-        if rel and not rel.startswith(".."):
-            return rel.split(os.sep)[0]
+        g = groupingName(full, sourcePath, "")
+        if g:
+            return g
     return name
 
 
