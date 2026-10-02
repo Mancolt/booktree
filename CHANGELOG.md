@@ -6,6 +6,11 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- Junk-tag searches parsed the first folder under `source_path` as the release name, so an Author/Title
+  layout (`Freida McFadden/The Guest/`) or a category folder (`completed/The Guest/`) searched Audible for
+  the author or `completed` and then cached a miss. Parsing now uses the same release folder grouping does.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
