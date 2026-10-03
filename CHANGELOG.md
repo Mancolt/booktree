@@ -6,6 +6,12 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- Two mixed torrents that both use a kind folder (`Title/Audiobook/`, `Title/Unabridged/`) were grouped as one
+  book named `Audiobook` and hardlinked to the first match. Grouping now walks past those folders the same
+  way it already walks past `MP3/` and `64k/`. `cd1/Audiobook/` and `cd2/Audiobook/` also get distinct disc
+  subfolders; they used to collide in a flat `Author/Title/` folder and the second disc was skipped.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
