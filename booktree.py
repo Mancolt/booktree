@@ -380,7 +380,8 @@ def noteRunTotals(cfg, logfile, books, matched):
 
 def bookGroupingKey(bf, multibook=False):
     """The dict key for a scanned file: filename when multibook or the file sits at the source root,
-    otherwise the release folder (walking past cd/disc/part parents so discs of one book stay together)."""
+    otherwise the release folder (walking past cd/disc/part parents and codec/bitrate/kind wrappers
+    so discs of one book stay together)."""
     if multibook or bf.hasNoParentFolder():
         return bf.getFileName()
     return myx_names.groupingName(bf.fullPath, bf.sourcePath, bf.getParentFolder())
