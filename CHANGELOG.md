@@ -6,6 +6,13 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Fixed
+- MAM ranking accepted a different snatched book by the same author when the id3 title and artist were
+  already usable: search is by filename (`01.mp3`, `file.m4b`), and the author-only gate skipped the title
+  check unless the release name had to supply title or authors. `The Guest` tagged as James Patterson was
+  filed as *Along Came a Spider* (token_sort 67, above `matchrate` 60). Ranking now requires a title match
+  whenever the id3/parsed title is not junk, and applies `Config/matchrate` the same way Audible already did.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed

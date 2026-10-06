@@ -1092,9 +1092,13 @@ class MAMBook:
         extension = f'"{bookFile.getExtension()}"'
         #for RANKING (never for the MAM query string) use the parsed release name where the id3 tags are junk
         rankBook, parsedApplied = self.applyParsedName(self.ffprobeBook, cfg) if (self.ffprobeBook is not None and not interactive) else (None, [])
-        # when the parse supplied title or authors, the title gate must see the search title
-        # (id3 or parsed), not the file basename — otherwise `file.m4b` rejects a correct MAM hit
-        rankTitle = rankBook.title if ("title" in parsedApplied or "authors" in parsedApplied) else title
+        # MAM is searched by filename, so a usable id3/parsed title must still gate the snatched hits.
+        # Using the file basename here used to skip the title gate whenever tags were already good
+        # (author-only), and filed Along Came a Spider as The Guest.
+        if rankBook is not None and not myx_names.isJunkTitle(rankBook.title):
+            rankTitle = rankBook.title
+        else:
+            rankTitle = title
     
         # Search using book key and authors (using or search in case the metadata is bad)
         print(f"Searching MAM for\n\tTitleFilename: {title}\n\tauthors:{authors}")
@@ -1144,9 +1148,13 @@ class MAMBook:
 
                 else:
                     bestMatchRate=0
+                    minMatchRate = int(cfg.get("Config/matchrate"))
                     #find the best match
                     print(f"Finding the best MAM match out of {len(books)} results")
                     targetBook = '|'.join([book.title, book.getAuthors(), book.getSeriesParts()])
+                    # a usable title (id3 or parsed) must pass the title gate: MAM search is filename-based,
+                    # so author-only used to accept that author's other snatched books (token_sort 67 >= 60)
+                    requireTitle = rankBook is None or not myx_names.isJunkTitle(rankBook.title)
             
                     for abook in books:
                         #if this book is snatched, include in the match
@@ -1155,7 +1163,7 @@ class MAMBook:
                             #otherwise, if maybe this title is close enough
                             #print (f"{abook.title} by {abook.authors}...")
                             authorOK = bool(len(book.authors) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg))
-                            if authorOK and "title" not in parsedApplied and "authors" not in parsedApplied:
+                            if authorOK and not requireTitle:
                                 mamBook = '|'.join([abook.getAuthors(), abook.getCleanTitle(), abook.getSeriesParts()])
                                 if add_narrators:
                                     mamBook = '|'.join([mamBook, abook.getNarrators()])
@@ -1173,7 +1181,7 @@ class MAMBook:
 
                             print(f"\tMatch Rate: {matchRate}\n\tSearch: {targetBook}\n\tResult: {mamBook}\n\tBest Match Rate: {bestMatchRate}\n")
                             
-                            if (matchRate[fuzzy_match] > bestMatchRate):
+                            if (matchRate[fuzzy_match] > bestMatchRate) and (matchRate[fuzzy_match] >= minMatchRate):
                                 bestMatchRate=matchRate[fuzzy_match]
                                 self.bestMAMMatch=abook
         else:
