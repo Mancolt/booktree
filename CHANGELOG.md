@@ -4,7 +4,7 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
-## Unreleased
+## 3.0.6 - 2026-10-07
 
 ### Added
 - `mam/accept_unsnatched` (default off): when the MAM file-name searches return rows but none marked
