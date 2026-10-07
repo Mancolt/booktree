@@ -64,6 +64,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | cache/mam_empty_hours | | How long an empty MAM answer (or one without a snatched entry) is reused | 24 |
 | mam/min_interval_seconds | | Minimum spacing between HTTP requests to MAM (cache hits are free) | 6 |
 | mam/max_queries_per_run | | Runaway guard: maximum MAM searches in one run (one container invocation); further searches are skipped with a message and those releases stay unmatched until the next run (0 = unlimited). The 6-second spacing is the real safety net; this only stops a loop | 3000 |
+| mam/accept_unsnatched | | 1 = when the MAM file-name searches return rows but none marked as snatched by you, accept the one row that passes the file type, author and title checks (no extra MAM request; see [Unsnatched MAM matches](#unsnatched-mam-matches-mamaccept_unsnatched-default-off)) | 0 |
 | json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
 | refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
 | pins | | List of `RELEASE=ASIN` strings: use that Audible ASIN for the release and re-process it now; same as `--pin` (see [Correcting a match](#correcting-a-match)) | |
@@ -320,6 +321,45 @@ apart, and afterwards once per TTL.
 its "already processed" marker are ignored while everything else is served from cache. `--no-cache` still does this
 for the whole run.
 
+### Unsnatched MAM matches (`mam/accept_unsnatched`, default off)
+
+The MAM pass searches MAM's file-name index for the release's file name (with its authors, then without) and keeps
+only torrents MAM marks as snatched by you (`my_snatched`), so the match is the torrent you downloaded. booktree
+usually runs minutes after a download completes (a download-complete hook), and MAM sets that mark minutes to hours
+later: the search finds the release's own torrent, not yet marked, and the release stays unmatched in the MAM pass
+(seen with every MAM-pass miss in October 2026, such as *Before She Knew Him* by Peter Swanson).
+
+With `"mam": {"accept_unsnatched": 1}`, when neither file-name search returned a snatched row but they did return
+rows, booktree looks at those same rows (no extra MAM request; same cache) and accepts one when it is the only row,
+by MAM id, that passes all of these checks:
+
+* the release's file type (`m4b`, `mp3`, ...) is among the row's file types;
+* one of the release's authors (id3, or parsed from the release name where the tags are junk) is one of the row's
+  authors, by the same name comparison used for snatched rows;
+* the same title: main titles with a token-sort ratio of 90 or more and the same numbers (also written out, as roman
+  numerals or as "Book N"); the same production (abridged, dramatised, GraphicAudio, full cast); matching subtitles
+  when both have one; no subtitle that only the release has; and a subtitle that only MAM has only when it is the
+  name of that torrent's own series and names no bundle or part;
+* the same series position: a "Book N" written in one title must appear in the other title or among the other
+  side's series parts (MAM's `series_info` for the row, the release's own series tags), otherwise the row is refused.
+
+So *The Viscount and the Witch* is not *The Witch*, *Cradle: Soulsmith* is not *Cradle: Unsouled*, *Part 1* is not
+*Part 2*, *Volume II* is not *Volume I*, *Dune: The Complete Saga* and *Dune: Part One* are not *Dune*, *Mistborn:
+Secret History* is not *Mistborn*, *Mother of Learning, Book 2* is not a row *Mother of Learning* that MAM lists as
+part 3, while *Leviathan Wakes* (tagged The Expanse #1) is the row *Leviathan Wakes: The Expanse, Book 1* in the
+series The Expanse.
+
+Two or more passing rows are ambiguous and none is used; a snatched row is always used as before. MAM rows carry no
+runtime, so these checks are the only protection: in `mam-audible` the Audible search that follows is built from
+the MAM match's title and authors, and the Audible runtime there is a preference, not a rejection, so a wrong MAM
+match would carry through. Nothing is checked with `flags/verbose` 0 and `flags/ebooks` 0, where booktree does
+not rank MAM results at all. stdout says `No snatched MAM match; using the only unsnatched one that passes the checks: <title> by
+<authors>`; the JSON log marks such a book with `mam_attempt: "unsnatched"` (and `match.attempt` is
+`mam-unsnatched` when the MAM record is the one filed).
+
+It is off by default because it accepts a MAM torrent not marked as yours, judged by file type, author and title
+alone. Turn it on for the config that uses `mam` or `mam-audible` if booktree runs right after downloads complete.
+
 ## JSON run log (`--json-log [PATH]`)
 
 In addition to the CSV, one JSON object per line: a `book` record per processed release and a final `run` record.
@@ -344,7 +384,7 @@ The CSV columns, file name and stdout are unchanged; the JSON log is the structu
 ~~~
 
 `match.attempt` says what produced the match: `pinned`, `candidates`, `parsed`, `parsed-authors`, `swapped`,
-`title-only`, `legacy` (upstream's own search), `mam`, or `log` (taken from the input log in `log` mode).
+`title-only`, `legacy` (upstream's own search), `mam`, `mam-unsnatched` (the MAM match is a torrent not yet marked snatched, `mam/accept_unsnatched`; see also `mam_attempt`), or `log` (taken from the input log in `log` mode).
 `queries[].cache_key` is the hash printed in `Checking cache: <kind>/<hash>`; a query that failed carries `error`,
 one skipped by the MAM budget carries `skipped`. `id3.duration_s` is the first file's duration while
 `expected_duration_min` is the whole release. One `run` record is written per `paths` entry. Give the path as

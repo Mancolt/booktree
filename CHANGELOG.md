@@ -6,6 +6,17 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Added
+- `mam/accept_unsnatched` (default off): when the MAM file-name searches return rows but none marked
+  `my_snatched`, accept the one row that has the release's file type, one of its authors and the same title (same
+  numbers, subtitle and production: no sibling volume, part, box set or dramatisation); two or more are ambiguous
+  and none is used. Seen 2026-10-07 with *Before She Knew Him* (Peter Swanson) and every other recent MAM-pass
+  miss: both file-name searches returned the release's own torrent, but booktree ran minutes after the download
+  and MAM had not marked it `my_snatched` yet, so the release was left unmatched in the MAM pass. No extra MAM
+  request: the rows come from the searches booktree already sends, whose text and cache keys are unchanged.
+  stdout: `No snatched MAM match; using the only unsnatched one that passes the checks: ...`; JSON log:
+  `mam_attempt: "unsnatched"`. See CONFIG.md, Unsnatched MAM matches.
+
 ## 3.0.5 - 2026-10-06
 
 ### Fixed

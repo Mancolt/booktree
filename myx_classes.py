@@ -16,10 +16,139 @@ import myx_mam
 import myx_hints
 import myx_names
 import copy
+import html
+from thefuzz import fuzz
 
 #Module variables
 authMode="login"
 verbose=False
+
+#Accepting a MAM torrent not marked my_snatched (Config/mam/accept_unsnatched, MAMBook.pickUnsnatched)
+MAM_TITLE_MIN = 90      # token-sort ratio for the main titles, and for the subtitles when both have one
+MAM_MAX_TITLE = 200     # untrusted titles (id3, MAM rows) are cut before the title regexes run
+_SUBTITLE_SPLIT = re.compile(r"\s*:\s*|\s+[-\u2013\u2014]\s+")
+_SERIES_POSITION = re.compile(r"\bbook\s*\d+(?:\.\d+)?\b", re.IGNORECASE)
+# a subtitle that only MAM has and that names a bundle or a part, not this book ("Dune: The Complete Saga",
+# "Dune: Part One"); checked on the raw subtitle, before noise words such as "complete" are removed
+_BUNDLE_WORDS = re.compile(r"\b(?:complete|saga|collection|box\s*set|boxed|omnibus|trilogy|series|books|volumes?|"
+                           r"vol|bundle|part|chapter|episode|season)\b", re.IGNORECASE)
+# numbers that tell volumes apart, written out or as roman numerals ("Volume II", "Part One")
+_NUMBER_WORDS = {w: str(n) for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+    "eighteen nineteen twenty".split())}
+_NUMBER_WORDS.update({w: str(n) for n, w in enumerate(
+    "_ i ii iii iv v vi vii viii ix x xi xii xiii xiv xv xvi xvii xviii xix xx".split()) if n})
+_EDITION = re.compile(r"(?<!un)\babridged\b|\bdramati[sz]ed\b|\bdramati[sz]ation\b|\bgraphic\s?audio\b|\bfull\s?cast\b",
+                      re.IGNORECASE)
+_NUMBER_WORDS.update({"first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5"})
+
+
+def _titleWords(text):
+    """Lower-case words for comparing titles: HTML entities decoded (MAM rows carry &#039; and &amp;), accents and
+    apostrophes removed ("Ender's" = "Enders", "Shōgun" = "Shogun"), noise words (Unabridged, m4b, ...) and other
+    punctuation removed."""
+    t = html.unescape(str(text or "")).replace("&", " and ")
+    t = myx_utilities.strip_accents(re.sub(r"['\u2019]", "", t))
+    t = myx_names.NOISE_WORD.sub(" ", t)
+    return " ".join(re.sub(r"[^\w\s]|_", " ", t).lower().split())
+
+
+def _numbers(words):
+    """The numbers in a _titleWords string: digits, number words and roman numerals ("i" counts: "Volume I")."""
+    return sorted(w if w.isdigit() else _NUMBER_WORDS[w] for w in words.split() if w.isdigit() or w in _NUMBER_WORDS)
+
+
+def _clip(title):
+    """html-unescaped, whitespace collapsed and cut to 2 x MAM_MAX_TITLE: id3 tags and MAM rows are untrusted,
+    and the title regexes are only linear on bounded, collapsed input."""
+    return " ".join(html.unescape(str(title or ""))[:MAM_MAX_TITLE * 4].split())[:MAM_MAX_TITLE * 2]
+
+
+def _edition(title):
+    """Markers of a different production of the same title: abridged (not unabridged), dramatised, GraphicAudio."""
+    return sorted(set(m.lower().replace(" ", "")[:6] for m in _EDITION.findall(title)))
+
+
+def _titleParts(title):
+    """(main title, subtitle, raw subtitle): the first two as _titleWords with "Book N" series positions dropped and a
+    "a novel" style subtitle emptied; the raw subtitle only html-unescaped."""
+    t = _clip(title)
+    t = re.sub(r"\s*\((?:un)?abridged\)", "", t, flags=re.IGNORECASE)
+    parts = _SUBTITLE_SPLIT.split(t, maxsplit=1)
+    raw = parts[1] if len(parts) > 1 else ""
+    main = _titleWords(_SERIES_POSITION.sub(" ", parts[0]))
+    sub = _titleWords(_SERIES_POSITION.sub(" ", raw))
+    if myx_names.SUBTITLE_NOISE.match(sub):
+        sub, raw = "", ""
+    return main, sub, raw
+
+
+def sameMamTitle(ours, theirs, series=()):
+    """The title check for an unsnatched MAM row (pickUnsnatched): the same book, not a sibling volume, a box set or another part.
+    Main titles must agree (token-sort ratio >= MAM_TITLE_MIN) and carry the same numbers, also written out
+    or in roman numerals ("Part 1" is not "Part 2", "Volume II" is not "Volume I"); when both have a subtitle those
+    must agree too ("Cradle: Unsouled" is not "Cradle: Soulsmith"); a subtitle only we have is refused ("Thrawn:
+    Treason" is not "Thrawn"); one only MAM has is accepted only when it is the name of the candidate's own series
+    (`series`, from MAM's series_info) and names no bundle or part: "Leviathan Wakes: The Expanse, Book 1" in series
+    The Expanse yes; "Dune: The Complete Saga", "Dune: Part One", "Mistborn: Secret History" no."""
+    om, osub, _ = _titleParts(ours)
+    tm, tsub, traw = _titleParts(theirs)
+    if not om or not tm or fuzz.token_sort_ratio(om, tm) < MAM_TITLE_MIN:
+        return False
+    # "Book 2" is not "Book 3" (the positions are dropped from the words compared below), and an abridged, dramatised
+    # or GraphicAudio production is not the plain one
+    position = seriesPosition
+    if position(ours) != position(theirs) and position(ours) and position(theirs):
+        return False
+    if _edition(_clip(ours)) != _edition(_clip(theirs)):
+        return False
+    if _numbers(f"{om} {osub}") != _numbers(f"{tm} {tsub}"):
+        return False
+    if osub and tsub:
+        return fuzz.token_sort_ratio(osub, tsub) >= MAM_TITLE_MIN
+    if osub:
+        return False
+    if _BUNDLE_WORDS.search(traw):          # also when noise-word removal left nothing ("Dune: Complete")
+        return False
+    if not tsub:
+        return True
+    names = [_titleWords(_clip(n)) for n in series or ()]
+    return any(n and fuzz.token_set_ratio(n, tsub) >= MAM_TITLE_MIN for n in names)
+
+
+def _num(part):
+    """A series part as a comparable string: "01", "1.0" and 1 are all "1"; "" when there is none."""
+    try:
+        return format(float(str(part).strip()), "g") if str(part).strip() else ""
+    except ValueError:
+        return str(part).strip().lower()
+
+
+def seriesPosition(title):
+    """The "Book N" numbers written in a title, as a sorted list of _num strings."""
+    return sorted(_num(n) for n in re.findall(r"\d+(?:\.\d+)?", " ".join(_SERIES_POSITION.findall(_clip(title)))))
+
+
+def samePosition(ours, theirs):
+    """Series position check for an unsnatched MAM row (pickUnsnatched), between two Books: a "Book N" written in one
+    title must be matched by the other's title or, failing that, by one of its series parts; when the other side has
+    no position at all, the row is refused ("Mother of Learning, Book 2" is not a row "Mother of Learning" that MAM
+    files as part 3, nor one with no part)."""
+    def positions(b):
+        return set(seriesPosition(b.title)), {_num(s.part) for s in b.series if _num(s.part)}
+    ot, op = positions(ours)
+    tt, tp = positions(theirs)
+    if ot and not tt:
+        return bool(ot & tp)
+    if tt and not ot:
+        return bool(tt & op)
+    return True     # both titles carry positions (sameMamTitle compared them) or neither does
+
+
+def _oneLine(text):
+    """An untrusted field (id3 tag, MAM row) for a one-line message: whitespace and control characters collapsed."""
+    return " ".join("".join(c if c.isprintable() else " " for c in str(text or "")).split())[:MAM_MAX_TITLE]
+
 
 #Author and Narrator Classes
 @dataclass
@@ -483,6 +612,7 @@ class MAMBook:
     parsedName:dict=None
     refresh:bool=False
     matchAttempt:str=""
+    mamAttempt:str=""
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
@@ -1105,14 +1235,25 @@ class MAMBook:
     
         # Search using book key and authors (using or search in case the metadata is bad)
         print(f"Searching MAM for\n\tTitleFilename: {title}\n\tauthors:{authors}")
-        books=myx_mam.getMAMBook(cfg, titleFilename=title, authors=authors, extension=extension, refresh=self.refresh)
+        # Config/mam/accept_unsnatched: also keep the rows not marked my_snatched (no extra request; pickUnsnatched)
+        pool = [] if myx_mam.acceptUnsnatched(cfg) else None
+        keep = {} if pool is None else {"unsnatched": pool}
+        books=myx_mam.getMAMBook(cfg, titleFilename=title, authors=authors, extension=extension, refresh=self.refresh, **keep)
 
         # was the author inaccurate? (Maybe it was LastName, FirstName or accented)
         # print (f"Trying again because Filename, Author = {len(self.mamMatches)}")
         if len(books) == 0:
             #try again, without author this time
             print(f"Widening MAM search using just\n\tTitleFilename: {title}")
-            books=myx_mam.getMAMBook(cfg, titleFilename=title, extension=extension, refresh=self.refresh)
+            books=myx_mam.getMAMBook(cfg, titleFilename=title, extension=extension, refresh=self.refresh, **keep)
+
+        # neither file-name search found a snatched torrent, but they did return rows: accept the one that passes the
+        # checks, if there is exactly one (pickUnsnatched); the ranking below then treats it like a snatched one
+        # (not when the ranking below does not run: with verbose off it never does, an upstream quirk)
+        fromUnsnatched = False
+        if len(books) == 0 and pool and (verbose or ebooks):
+            books = self.pickUnsnatched(cfg, rankBook if rankBook is not None else self.ffprobeBook, bookFile, pool)
+            fromUnsnatched = bool(books)
 
         #Find the best match
         self.mamMatches = books
@@ -1156,8 +1297,8 @@ class MAMBook:
                     targetBook = '|'.join([book.title, book.getAuthors(), book.getSeriesParts()])
             
                     for abook in books:
-                        #if this book is snatched, include in the match
-                        if abook.snatched:
+                        #if this book is snatched, include in the match (an accepted unsnatched one passed pickUnsnatched)
+                        if abook.snatched or fromUnsnatched:
                             #the author is known, check if this book is this authors book
                             #otherwise, if maybe this title is close enough
                             #print (f"{abook.title} by {abook.authors}...")
@@ -1189,12 +1330,53 @@ class MAMBook:
                 self.bestMAMMatch = books[0]
 
 
+        if fromUnsnatched and self.bestMAMMatch is not None:
+            self.matchAttempt = "mam-unsnatched"
+            self.mamAttempt = "unsnatched"
+
         #pprint(self.bestMAMMatch)
         if (books is not None): 
             return self.bestMAMMatch
         else: 
             return None
     
+    def pickUnsnatched(self, cfg, book, bookFile, pool):
+        """Config/mam/accept_unsnatched: the file-name searches found rows but none marked my_snatched. That is usually
+        the release's own torrent: the hook runs booktree minutes after a download and MAM sets my_snatched later.
+        `pool` holds those rows as (key, Book, file types), from both searches. A row is accepted only when it is the
+        one row (by MAM id) that has the release's file type, one of its authors (exact, as for snatched rows), the same
+        title (sameMamTitle: no sibling volume, part, bundle or other production) and the same series position
+        (samePosition: a "Book N" in one title against the other's title or series part); two or more are ambiguous and
+        none is used. MAM rows carry no runtime. Returns [the Book] or []."""
+        if book is None:
+            return []
+        parsed = self.getParsedName(book, cfg) or {}
+        title = _clip(book.title)
+        # a title that only repeats the release name is junk, unless the release name is just the title
+        junk = myx_names.isJunkTitle(title) or (myx_names.isJunkTitle(title, parsed.get("source") or self.name) and
+                                                _titleWords(parsed.get("title") or "") != _titleWords(title))
+        if junk or not book.authors or myx_names.isJunkAuthors(book.authors):
+            print("No snatched MAM match; no usable title and author to check the unsnatched ones")
+            return []
+        ext = bookFile.getExtension().lower()
+        rows = {}
+        for key, abook, types in pool:
+            rows.setdefault(key, (abook, types))
+        # the silent checks first: isThisMyAuthorsBook prints the row's title (verbose), and a row that is not ours
+        # need not reach stdout
+        passed = [abook for abook, types in rows.values()
+                  if ext and ext in types and sameMamTitle(title, abook.title, [x.name for x in abook.series])
+                  and samePosition(book, abook) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)]
+        if len(passed) == 1:
+            print(f"No snatched MAM match; using the only unsnatched one that passes the checks: "
+                  f"{_oneLine(passed[0].title)} by {_oneLine(passed[0].getAuthors())}")
+            return passed
+        if passed:
+            print(f"No snatched MAM match; {len(passed)} unsnatched ones pass the checks: ambiguous, not using any")
+        else:
+            print(f"No snatched MAM match; no unsnatched one passes the title, author and file type check ({len(rows)} row(s))")
+        return []
+
     def getHashKey(self):
         return myx_utilities.getHash(self.name)
 

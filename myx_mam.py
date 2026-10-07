@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import re
 import time
 from pprint import pprint
 import myx_classes
@@ -183,55 +184,95 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
             
     return None
 
-def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
+def _rowToBook(b):
+    """One row of a MAM search answer as a Book (snatched set from my_snatched)."""
+    book=myx_classes.Book()
+    book.init()
+    if 'asin' in b: 
+        book.asin=str(b["asin"])
+    if 'title' in b: 
+        book.title=str(b["title"])
+    if 'author_info'in b:
+        #format {id:author, id:author}
+        if len(b["author_info"]):
+            authors = json.loads(b["author_info"])
+            book.authors.extend(myx_classes.contributors(str(author) for author in authors.values()))
+    if 'narrator_info'in b:
+        #format {id:narrator, id:narrator}
+        if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
+            narrators = json.loads(b["narrator_info"])
+            book.narrators.extend(myx_classes.contributors(str(narrator) for narrator in narrators.values()))
+    if 'series_info'in b:
+        #format {"35598": ["Kat Dubois", "5"]}
+        if ((not b["series_info"] is None) and len(b["series_info"])):
+            series_info = json.loads(b["series_info"])
+            for series in series_info.values():
+                # a value that is not a list (null, a number, a bare string that list() would split into
+                # letters) or one with no name is not a series entry: skip it rather than abort the run
+                if not isinstance(series, (list, tuple)):
+                    continue
+                s=list(series)
+                if not s or s[0] in (None, ""):
+                    continue
+                seriesName = str(s[0])
+                seriesName = seriesName.replace("&#039;", "'")
+                # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
+                # and abort the run, or become "None" and file as "Series #None - Title"
+                part = s[1] if len(s) > 1 else ""
+                book.series.append(myx_classes.Series(seriesName, part))
+    if 'lang_code' in b:
+        book.language=myx_utilities.getLanguage((b["lang_code"]))
+    if 'my_snatched' in b:
+        book.snatched=bool((b["my_snatched"])) 
+    
+    return book
+
+
+def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False, unsnatched=None):
+    """The snatched torrents of a file-name search, as Books. `unsnatched`, when a list, also receives the other rows
+    as (MAM id, Book, file types) for Config/mam/accept_unsnatched (MAMBook.pickUnsnatched); a malformed one is skipped."""
     books=[]
     mamBook=searchMAM(cfg, titleFilename, authors, extension, refresh=refresh)
     if (mamBook is not None):
         for b in mamBook:
-            #pprint(b)
-            book=myx_classes.Book()
-            book.init()
-            if 'asin' in b: 
-                book.asin=str(b["asin"])
-            if 'title' in b: 
-                book.title=str(b["title"])
-            if 'author_info'in b:
-                #format {id:author, id:author}
-                if len(b["author_info"]):
-                    authors = json.loads(b["author_info"])
-                    book.authors.extend(myx_classes.contributors(str(author) for author in authors.values()))
-            if 'narrator_info'in b:
-                #format {id:narrator, id:narrator}
-                if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
-                    narrators = json.loads(b["narrator_info"])
-                    book.narrators.extend(myx_classes.contributors(str(narrator) for narrator in narrators.values()))
-            if 'series_info'in b:
-                #format {"35598": ["Kat Dubois", "5"]}
-                if ((not b["series_info"] is None) and len(b["series_info"])):
-                    series_info = json.loads(b["series_info"])
-                    for series in series_info.values():
-                        # a value that is not a list (null, a number, a bare string that list() would split into
-                        # letters) or one with no name is not a series entry: skip it rather than abort the run
-                        if not isinstance(series, (list, tuple)):
-                            continue
-                        s=list(series)
-                        if not s or s[0] in (None, ""):
-                            continue
-                        seriesName = str(s[0])
-                        seriesName = seriesName.replace("&#039;", "'")
-                        # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
-                        # and abort the run, or become "None" and file as "Series #None - Title"
-                        part = s[1] if len(s) > 1 else ""
-                        book.series.append(myx_classes.Series(seriesName, part))
-            if 'lang_code' in b:
-                book.language=myx_utilities.getLanguage((b["lang_code"]))
-            if 'my_snatched' in b:
-                book.snatched=bool((b["my_snatched"])) 
-            
+            if unsnatched is not None and isinstance(b, dict) and not b.get("my_snatched"):
+                try:
+                    #key: the MAM id, so a torrent both searches return counts once; a row without one is its own key
+                    key = str(b.get("id") or "") or f"row-{len(unsnatched)}"
+                    unsnatched.append((key, _printable(_rowToBook(b)), _fileTypes(b)))
+                except (TypeError, ValueError, AttributeError, RecursionError):
+                    pass        # a malformed row (author_info that is not JSON, ...) is skipped, never the run
+                continue
+            book=_rowToBook(b)
             if book.snatched:
                 books.append(book)
 
     return books
+
+
+def _clean(text):
+    """Control characters (CR, LF, ESC, ...) as spaces: a row nobody chose must not add lines to stdout."""
+    return "".join(c if c.isprintable() else " " for c in str(text))
+
+
+def _printable(book):
+    """An unsnatched row's Book with control characters removed from the fields that are printed or filed."""
+    book.title = _clean(book.title)
+    for person in book.authors + book.narrators:
+        person.name = _clean(person.name)
+    for series in book.series:
+        series.name = _clean(series.name)
+    return book
+
+
+def _fileTypes(row):
+    """The file types of a MAM row ("m4b", "mp3 m4b", ...) as a set of lower-case words."""
+    return set(re.findall(r"[a-z0-9]+", str(row.get("filetype") or "").lower()))
+
+
+def acceptUnsnatched(cfg):
+    """Config/mam/accept_unsnatched (default 0 = off): see MAMBook.pickUnsnatched."""
+    return _knob(cfg, "accept_unsnatched", 0, 0, 1, int) == 1
 
 def testSessionCookie(mySession, cfg=None):
     """True when MAM accepts the session's cookie, False when MAM answered and rejected it, None when MAM could not be
