@@ -88,7 +88,7 @@ def load_cfg(path, cache_path, log_path):
         #the staged cache is a snapshot: replays compare code, not wall-clock expiry, MAM pacing or budgets
         cfg._data["Config"]["cache"] = {k: 10**9 for k in ("audible_positive_hours", "audible_empty_hours",
                                                           "mam_positive_hours", "mam_empty_hours")}
-        #merged, not replaced: other Config/mam settings (title_fallback) are part of the code under test
+        #merged, not replaced: other Config/mam settings (accept_unsnatched) are part of the code under test
         cfg._data["Config"]["mam"] = {**(cfg._data["Config"].get("mam") or {}), "min_interval_seconds": 0, "max_queries_per_run": 0}
     return cfg
 

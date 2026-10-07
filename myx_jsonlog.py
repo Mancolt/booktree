@@ -5,8 +5,8 @@ Record (type "book"), schema_version 1:
     run, release, release_path, files[{path, duration_s, hardlinked}], id3{asin,title,authors,narrators,duration_s (first file)},
     parsed_name{title,authors,series,part,asin} | null, hint | null, pinned_asin,
     matched, metadata_source, match{asin,title,authors,narrators,series,part,runtime_min,match_rate,attempt} | null,
-    expected_duration_min, runtime_delta_min | null, target_path, hardlinked, mam_count, mam_attempt ("title" | null), audible_count,
-    queries[{kind, cache_key, cached, results, error?, skipped?, search? ("title-author"), asin,title,authors,narrators,keywords | text}]
+    expected_duration_min, runtime_delta_min | null, target_path, hardlinked, mam_count, mam_attempt ("unsnatched" | null), audible_count,
+    queries[{kind, cache_key, cached, results, error?, skipped?, asin,title,authors,narrators,keywords | text}]
 Record (type "run", one per Config/paths entry): run, started_utc, finished_utc, metadata, books, matched, unmatched,
     hardlinked_files, mam_queries (HTTP searches), mam_queries_skipped (budget), audible_queries, errors, csv, exit_code
 """
@@ -105,7 +105,7 @@ def record(book, cfg, run_id):
         "hardlinked": bool(files) and all(f["hardlinked"] for f in files),
         "already_filed": getattr(book, "alreadyFiled", None) or None,       # Config/dedupe_roots: folder that holds the same files
         "mam_count": len(book.mamMatches or []),
-        "mam_attempt": getattr(book, "mamAttempt", "") or None,          # "title": the MAM match came from mam/title_fallback
+        "mam_attempt": getattr(book, "mamAttempt", "") or None,          # "unsnatched": Config/mam/accept_unsnatched
         "audible_count": len(book.audibleMatches or []),
         "queries": getattr(book, "queries", []) or [],
     }
