@@ -199,14 +199,12 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
                 #format {id:author, id:author}
                 if len(b["author_info"]):
                     authors = json.loads(b["author_info"])
-                    for author in authors.values():
-                        book.authors.append(myx_classes.Contributor(str(author)))
+                    book.authors.extend(myx_classes.contributors(str(author) for author in authors.values()))
             if 'narrator_info'in b:
                 #format {id:narrator, id:narrator}
                 if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
                     narrators = json.loads(b["narrator_info"])
-                    for narrator in narrators.values():
-                        book.narrators.append(myx_classes.Contributor(str(narrator)))
+                    book.narrators.extend(myx_classes.contributors(str(narrator) for narrator in narrators.values()))
             if 'series_info'in b:
                 #format {"35598": ["Kat Dubois", "5"]}
                 if ((not b["series_info"] is None) and len(b["series_info"])):

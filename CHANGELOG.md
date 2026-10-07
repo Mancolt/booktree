@@ -6,6 +6,24 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+## 3.0.5 - 2026-10-06
+
+### Fixed
+- A file whose `composer` (narrator) tag was present but empty was searched on Audible with narrator `""`
+  (with `add_narrators` on) and Audible answered with nothing. Seen 2026-10-06 with *Before She Knew Him*
+  (Peter Swanson): the same search without the `""` returns `0062838180` first. An empty or blank tag, or a
+  stray comma (`A, , B`) in `artist`/`composer`, no longer creates a nameless author or narrator, and a name
+  that is empty once cleansed is never sent to Audible or written to the run log (`A,,B` becomes `A,B`). Empty
+  names in Audible and MAM answers are dropped too, so an empty tag can no longer pass the author check
+  against an empty result author. Where a book is filed from its own tags, a blank `artist` tag now gives
+  the `Unknown` author folder, as a missing tag already did, instead of an empty one. Side effects worth
+  knowing: a series with an empty name (an empty `album` tag next to `SERIES`/`PART`) no longer leaves a
+  trailing comma in the `*-series` columns (`Saga,` becomes `Saga`, matching `seriesparts`); for a blank
+  `artist` tag the MAM search drops its empty `("")` author group, so its cache key changes and the search is
+  repeated once; the JSON run log lists such authors/narrators as `[]` instead of `[""]`.
+- `MAMBook.ffprobe` appended an author without a name (upstream; it raised `TypeError`). The method is not
+  called by booktree, but it now builds named authors like the live parser.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed

@@ -133,11 +133,9 @@ def product2Book(product):
         if 'publisher_summary' in product: book.description=str(product["publisher_summary"])
         if 'runtime_length_min' in product: book.length=product["runtime_length_min"]
         if 'authors' in product: 
-            for author in product["authors"]:
-                book.authors.append(myx_classes.Contributor(str(author["name"])))
+            book.authors.extend(myx_classes.contributors(str(author["name"]) for author in product["authors"]))
         if 'narrators' in product: 
-            for narrator in product["narrators"]:
-                book.narrators.append(myx_classes.Contributor(str(narrator["name"])))
+            book.narrators.extend(myx_classes.contributors(str(narrator["name"]) for narrator in product["narrators"]))
         if 'publisher_name' in product: book.publisher=str(product["publisher_name"])
         if 'publication_datetime' in product: book.publishYear=str(product["publication_datetime"])
         if 'issue_date' in product: book.releaseDate=str(product["issue_date"])

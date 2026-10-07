@@ -27,6 +27,21 @@ class Contributor:
     name:str
     #books:list[int]= field(default_factory=list)
 
+
+def contributors(names, clean=None):
+    """Contributors for the given names, skipping any that are empty once cleansed. An empty `composer` tag, a
+    blank `artist` or a stray comma ("A, , B") used to become Contributor(""); getList then emitted `""` and
+    Audible answered a search with narrator=`""` with nothing. `clean` is applied to each name first (removeGA
+    for authors, say); the kept name is otherwise left as it was."""
+    people = []
+    for name in names:
+        name = "" if name is None else str(name)
+        if clean is not None:
+            name = clean(name)
+        if myx_utilities.cleanseAuthor(name).strip():
+            people.append(Contributor(name))
+    return people
+
 #target_path template for a book in a series whose part is unknown (Config/target_path/in_series_no_part)
 IN_SERIES_NO_PART = "{author}/{series}/{series} - {title}"
 
@@ -132,14 +147,12 @@ class Book:
     def setAuthors(self, authors):
         #Given a csv of authors, convert it to a list
         if len(authors.strip()):
-            for author in authors.split (","):
-                self.authors.append(Contributor(author))
+            self.authors.extend(contributors(authors.split(",")))
 
     def setNarrators(self, narrators):
         #Given a csv of authors, convert it to a list
         if len(narrators.strip()):
-            for narrator in narrators.split (","):
-                self.narrators.append(Contributor(narrator))
+            self.narrators.extend(contributors(narrators.split(",")))
 
     def setSeries(self, series):
         #Given a csv of authors, convert it to a list
@@ -279,13 +292,11 @@ class BookFile:
         if 'artist' in metadata: 
             #remove everything in parentheses firstm before parsing
             artist = re.sub(r"\(.+\)", "", metadata["artist"], flags=re.IGNORECASE)
-            for author in artist.split(","):
-                book.authors.append(Contributor(myx_utilities.removeGA(author)))
+            book.authors.extend(contributors(artist.split(","), myx_utilities.removeGA))
         #parse narrators
         if 'composer' in metadata: 
             composer = re.sub(r"\(.+\)", "", metadata["composer"], flags=re.IGNORECASE)
-            for narrator in composer.split(","):
-                book.narrators.append(Contributor(narrator))
+            book.narrators.extend(contributors(composer.split(",")))
         #duration in minutes
         book.duration = duration
         
@@ -537,7 +548,7 @@ class MAMBook:
         if parsed["authors"] and myx_names.isJunkAuthors(book.authors):
             if searchBook is book:
                 searchBook = copy.copy(searchBook)
-            searchBook.authors = [Contributor(a) for a in parsed["authors"]]
+            searchBook.authors = contributors(parsed["authors"])
             applied.append("authors")
         if parsed["asin"] and not (book.asin or "").strip() and myx_names.isJunkTitle(book.title, relName):
             # filename ASINs are only for untagged/junk-title files. A usable id3 title must not be
@@ -563,7 +574,7 @@ class MAMBook:
         if self.hint.get("title"):
             searchBook.title = self.hint["title"]
         if self.hint.get("authors"):
-            searchBook.authors = [Contributor(a) for a in self.hint["authors"]]
+            searchBook.authors = contributors(self.hint["authors"])
         return searchBook
 
     def acceptPinnedAsin(self, client, cfg, book, language):
@@ -636,18 +647,14 @@ class MAMBook:
             #parse authors
             if 'artist' in metadata: 
                 #remove everything in parentheses firstm before parsing
-                artist = metadata["artist"]
-                for author in re.split(",", artist):
-                    author = re.sub(r"\([.]+\)", "", author, flags=re.IGNORECASE)  
-                    author = myx_utilities.removeGA(author)
-                    if len(author): book.authors.append(Contributor())
+                #(upstream appended a nameless Contributor() here, which raises TypeError; this method has no caller)
+                book.authors.extend(contributors(re.split(",", metadata["artist"]),
+                                                 lambda a: myx_utilities.removeGA(re.sub(r"\([^)]*\)", "", a))))
             #parse narrators
             if 'composer' in metadata: 
-                composer = metadata["composer"]
-                for narrator in re.split(",", composer):
-                    #remove any occurrence of (Narrator)
-                    narrator = re.sub(r"\([.]+\)", "", narrator, flags=re.IGNORECASE)       
-                    book.narrators.append(Contributor(narrator))
+                #remove any occurrence of (Narrator)
+                book.narrators.extend(contributors(re.split(",", metadata["composer"]),
+                                                   lambda n: re.sub(r"\([^)]*\)", "", n)))
         
         #return a book object created from  ffprobe
         self.ffprobeBook=book
@@ -863,12 +870,12 @@ class MAMBook:
                     [a.name for a in parsedBook.authors], parsedAuthors):
                 #the tags name someone else (often the narrator in the artist tag): try the release name's authors
                 namedBook = copy.copy(parsedBook)
-                namedBook.authors = [Contributor(a) for a in parsedAuthors]
+                namedBook.authors = contributors(parsedAuthors)
                 attempts.append(("parsed-authors", namedBook, "", True))
             alt = self.parsedName.get("alternative") if self.parsedName else None
             if alt and not pAsin and "title" in parsedApplied:
                 altBook = copy.copy(parsedBook)
-                altBook.title, altBook.authors = alt["title"], [Contributor(a) for a in alt["authors"]]
+                altBook.title, altBook.authors = alt["title"], contributors(alt["authors"])
                 attempts.append(("swapped", altBook, "", True))
             if parsedBook.authors and not pAsin:
                 soloBook = copy.copy(parsedBook)

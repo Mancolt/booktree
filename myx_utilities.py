@@ -26,15 +26,18 @@ def probe_file(filename):
 
 #Utilities
 def getList(items, delimiter=",", encloser="", stripaccents=True):
+    #an item whose name is empty once cleansed is skipped: an enclosed empty name ('""') sent to Audible as
+    #narrator/author matches nothing, and an unenclosed one leaves "A,,B" in the run log
     enclosedItems=[]
     for item in items:
         if type(item) == myx_classes.Contributor:
-            enclosedItems.append(f"{encloser}{cleanseAuthor(item.name)}{encloser}")
+            name = cleanseAuthor(item.name)
+        elif type(item) == myx_classes.Series:
+            name = cleanseSeries(item.name)
         else:
-            if type(item) == myx_classes.Series:
-                enclosedItems.append(f"{encloser}{cleanseSeries(item.name)}{encloser}")
-            else:
-                enclosedItems.append(f"{encloser}{item.name}{encloser}")
+            name = str(item.name)
+        if name.strip():
+            enclosedItems.append(f"{encloser}{name}{encloser}")
 
     return delimiter.join(enclosedItems)
 
