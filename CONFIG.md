@@ -339,16 +339,21 @@ by MAM id, that passes all of these checks:
 * the same title: main titles with a token-sort ratio of 90 or more and the same numbers (also written out, as roman
   numerals or as "Book N"); the same production (abridged, dramatised, GraphicAudio, full cast); matching subtitles
   when both have one; no subtitle that only the release has; and a subtitle that only MAM has only when it is the
-  name of that torrent's own series and names no bundle or part. So *The Viscount and the Witch* is not *The
-  Witch*, *Cradle: Soulsmith* is not *Cradle: Unsouled*, *Part 1* is not *Part 2*, *Volume II* is not *Volume I*,
-  *Dune: The Complete Saga* and *Dune: Part One* are not *Dune*, *Mistborn: Secret History* is not *Mistborn*, while
-  *Leviathan Wakes: The Expanse, Book 1* in the series The Expanse is *Leviathan Wakes*.
+  name of that torrent's own series and names no bundle or part;
+* the same series position: a "Book N" written in one title must appear in the other title or among the other
+  side's series parts (MAM's `series_info` for the row, the release's own series tags), otherwise the row is refused.
+
+So *The Viscount and the Witch* is not *The Witch*, *Cradle: Soulsmith* is not *Cradle: Unsouled*, *Part 1* is not
+*Part 2*, *Volume II* is not *Volume I*, *Dune: The Complete Saga* and *Dune: Part One* are not *Dune*, *Mistborn:
+Secret History* is not *Mistborn*, *Mother of Learning, Book 2* is not a row *Mother of Learning* that MAM lists as
+part 3, while *Leviathan Wakes* (tagged The Expanse #1) is the row *Leviathan Wakes: The Expanse, Book 1* in the
+series The Expanse.
 
 Two or more passing rows are ambiguous and none is used; a snatched row is always used as before. MAM rows carry no
 runtime, so these checks are the only protection: in `mam-audible` the Audible search that follows is built from
 the MAM match's title and authors, and the Audible runtime there is a preference, not a rejection, so a wrong MAM
-match would carry through. Nothing is checked with `flags/verbose` 0, where booktree does not rank MAM results at
-all. stdout says `No snatched MAM match; using the only unsnatched one that passes the checks: <title> by
+match would carry through. Nothing is checked with `flags/verbose` 0 and `flags/ebooks` 0, where booktree does
+not rank MAM results at all. stdout says `No snatched MAM match; using the only unsnatched one that passes the checks: <title> by
 <authors>`; the JSON log marks such a book with `mam_attempt: "unsnatched"` (and `match.attempt` is
 `mam-unsnatched` when the MAM record is the one filed).
 

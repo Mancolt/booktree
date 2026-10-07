@@ -72,9 +72,10 @@ def posts():
     return [p for s in FakeSession.instances for p in s.posts]
 
 
-def release(title="Before She Knew Him", authors=("Peter Swanson",), name=RELEASE, file=FILE):
+def release(title="Before She Knew Him", authors=("Peter Swanson",), name=RELEASE, file=FILE, series=()):
     id3 = myx_classes.Book(title=title, duration=615 * 60)
     id3.authors = [myx_classes.Contributor(a) for a in authors]
+    id3.series = [myx_classes.Series(n, p) for n, p in series]
     src = "/data/downloads/complete/audio"
     mb = myx_classes.MAMBook(name)
     bf = myx_classes.BookFile(f"{name}/{file}", f"{src}/{name}/{file}", src, "/data/Audiobooks")
@@ -204,6 +205,37 @@ class AcceptTest(Base):
         best, _, _ = self.best([row(2, "Before She Knew Him")], widened=[row(2, "Before She Knew Him"), row(9, "Other")])
         self.assertEqual(best.title, "Before She Knew Him")
 
+    def test_rows_without_an_id_are_not_merged(self):
+        a, b = row(None, "Before She Knew Him"), row(None, "Before She Knew Him")
+        best, out, _ = self.best([a, b], widened=[])
+        self.assertIsNone(best)
+        self.assertIn("2 unsnatched ones pass the checks: ambiguous", out)
+
+    def test_a_snatched_row_from_the_widened_search_wins_over_the_pool(self):
+        best, out, mb = self.best([row(2, "Before She Knew Him")], widened=[row(3, "Before She Knew Him", snatched=1)])
+        self.assertTrue(best.snatched)
+        self.assertEqual(mb.mamAttempt, "")
+        self.assertNotIn("unsnatched", out)
+
+    def test_ebooks_without_verbose_use_the_pick(self):
+        mb = release(file="Before She Knew Him.epub")
+        best, _, mb = self.best([row(2, "Before She Knew Him", filetype="epub")], mb=mb,
+                                **{"Config/flags/verbose": 0, "Config/flags/ebooks": 1})
+        self.assertEqual(best.title, "Before She Knew Him")
+        self.assertEqual(mb.mamAttempt, "unsnatched")
+
+    def test_json_log_marks_the_pick(self):
+        import myx_jsonlog
+        best, _, mb = self.best([row(2, "Before She Knew Him")])
+        mb.bestMAMMatch, mb.metadata, mb.isMatched = best, "mam", True
+        rec = myx_jsonlog.record(mb, self.cfg(), "run")
+        self.assertEqual(rec["mam_attempt"], "unsnatched")
+        self.assertEqual(rec["match"]["attempt"], "mam-unsnatched")
+        off = release()
+        with contextlib.redirect_stdout(io.StringIO()):
+            off.getMAMBooks(FakeConfig(self.td.name), off.files[0])
+        self.assertIsNone(myx_jsonlog.record(off, FakeConfig(self.td.name), "run")["mam_attempt"])
+
     def test_ranking_off_means_nothing_is_picked(self):
         # getMAMBooks only ranks with verbose on (upstream); nothing would use the pick
         with patch.object(myx_classes.MAMBook, "pickUnsnatched") as pick:
@@ -242,10 +274,36 @@ class GateTest(Base):
         self.assertIsNone(best)
 
     def test_a_mam_only_subtitle_must_be_the_rows_own_series(self):
-        mb = release(title="Leviathan Wakes", authors=("James S. A. Corey",), name="Leviathan Wakes", file="Leviathan Wakes.m4b")
-        best, _, _ = self.best([row(1, "Leviathan Wakes: The Expanse, Book 1", authors=("James S. A. Corey",),
-                                    series='{"9": ["The Expanse", "1"]}')], mb=mb)
+        rows = [row(1, "Leviathan Wakes: The Expanse, Book 1", authors=("James S. A. Corey",),
+                    series='{"9": ["The Expanse", "1"]}')]
+        mb = release(title="Leviathan Wakes", authors=("James S. A. Corey",), name="Leviathan Wakes",
+                     file="Leviathan Wakes.m4b", series=[("The Expanse", "1")])
+        best, _, _ = self.best(rows, mb=mb)
         self.assertEqual(best.title, "Leviathan Wakes: The Expanse, Book 1")
+        # without the release's own series part the row's "Book 1" has nothing to agree with
+        mb = release(title="Leviathan Wakes", authors=("James S. A. Corey",), name="Leviathan Wakes", file="Leviathan Wakes.m4b")
+        best, _, _ = self.best(rows, mb=mb)
+        self.assertIsNone(best)
+
+    def test_a_book_number_must_agree_with_the_rows_series_part(self):
+        def pick(part):
+            self.td = tempfile.TemporaryDirectory()      # a fresh cache: the same search with another answer
+            self.addCleanup(self.td.cleanup)
+            series = ('{"1": ["Mother of Learning", "' + part + '"]}') if part else ""
+            mb = release(title="Mother of Learning, Book 2", authors=("Domagoj Kurmaic",), name="Mother of Learning 2",
+                         file="Mother of Learning 2.m4b")
+            best, _, _ = self.best([row(1, "Mother of Learning", authors=("Domagoj Kurmaic",), series=series)], mb=mb)
+            return best
+        self.assertIsNone(pick("3"))
+        self.assertIsNone(pick(None))
+        self.assertEqual(pick("2").title, "Mother of Learning")
+        self.assertEqual(pick("2.0").title, "Mother of Learning")
+
+    def test_control_characters_in_a_row_never_reach_stdout(self):
+        bad = row(1, "Some Other Book\n\ttitle: INJECTED\n\tasin: B000FAKE")
+        best, out, _ = self.best([bad, row(2, "Before Sh\x1be Knew Him")])
+        self.assertNotIn("\ttitle: INJECTED", out)
+        self.assertNotIn("\x1b", out)
 
     def test_parsed_title_and_authors_are_used_when_the_tags_are_junk(self):
         best, _, _ = self.best([row(2, "Before She Knew Him")], mb=release(title="AudioTrack 01", authors=("unknown artist",)))

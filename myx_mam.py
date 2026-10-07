@@ -230,14 +230,16 @@ def _rowToBook(b):
 
 def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False, unsnatched=None):
     """The snatched torrents of a file-name search, as Books. `unsnatched`, when a list, also receives the other rows
-    as (key, Book, file types) for Config/mam/accept_unsnatched (MAMBook.pickUnsnatched); a malformed one is skipped."""
+    as (MAM id, Book, file types) for Config/mam/accept_unsnatched (MAMBook.pickUnsnatched); a malformed one is skipped."""
     books=[]
     mamBook=searchMAM(cfg, titleFilename, authors, extension, refresh=refresh)
     if (mamBook is not None):
         for b in mamBook:
             if unsnatched is not None and isinstance(b, dict) and not b.get("my_snatched"):
                 try:
-                    unsnatched.append((str(b.get("id", "")) or str(b.get("title", "")), _rowToBook(b), _fileTypes(b)))
+                    #key: the MAM id, so a torrent both searches return counts once; a row without one is its own key
+                    key = str(b.get("id") or "") or f"row-{len(unsnatched)}"
+                    unsnatched.append((key, _printable(_rowToBook(b)), _fileTypes(b)))
                 except (TypeError, ValueError, AttributeError, RecursionError):
                     pass        # a malformed row (author_info that is not JSON, ...) is skipped, never the run
                 continue
@@ -246,6 +248,21 @@ def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False, u
                 books.append(book)
 
     return books
+
+
+def _clean(text):
+    """Control characters (CR, LF, ESC, ...) as spaces: a row nobody chose must not add lines to stdout."""
+    return "".join(c if c.isprintable() else " " for c in str(text))
+
+
+def _printable(book):
+    """An unsnatched row's Book with control characters removed from the fields that are printed or filed."""
+    book.title = _clean(book.title)
+    for person in book.authors + book.narrators:
+        person.name = _clean(person.name)
+    for series in book.series:
+        series.name = _clean(series.name)
+    return book
 
 
 def _fileTypes(row):

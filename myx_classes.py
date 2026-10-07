@@ -97,7 +97,7 @@ def sameMamTitle(ours, theirs, series=()):
         return False
     # "Book 2" is not "Book 3" (the positions are dropped from the words compared below), and an abridged, dramatised
     # or GraphicAudio production is not the plain one
-    position = lambda t: sorted(re.findall(r"\d+(?:\.\d+)?", " ".join(_SERIES_POSITION.findall(_clip(t)))))  # noqa: E731
+    position = seriesPosition
     if position(ours) != position(theirs) and position(ours) and position(theirs):
         return False
     if _edition(_clip(ours)) != _edition(_clip(theirs)):
@@ -112,8 +112,37 @@ def sameMamTitle(ours, theirs, series=()):
         return False
     if not tsub:
         return True
-    names = [_titleWords(n) for n in series or ()]
+    names = [_titleWords(_clip(n)) for n in series or ()]
     return any(n and fuzz.token_set_ratio(n, tsub) >= MAM_TITLE_MIN for n in names)
+
+
+def _num(part):
+    """A series part as a comparable string: "01", "1.0" and 1 are all "1"; "" when there is none."""
+    try:
+        return format(float(str(part).strip()), "g") if str(part).strip() else ""
+    except ValueError:
+        return str(part).strip().lower()
+
+
+def seriesPosition(title):
+    """The "Book N" numbers written in a title, as a sorted list of _num strings."""
+    return sorted(_num(n) for n in re.findall(r"\d+(?:\.\d+)?", " ".join(_SERIES_POSITION.findall(_clip(title)))))
+
+
+def samePosition(ours, theirs):
+    """Series position check for an unsnatched MAM row (pickUnsnatched), between two Books: a "Book N" written in one
+    title must be matched by the other's title or, failing that, by one of its series parts; when the other side has
+    no position at all, the row is refused ("Mother of Learning, Book 2" is not a row "Mother of Learning" that MAM
+    files as part 3, nor one with no part)."""
+    def positions(b):
+        return set(seriesPosition(b.title)), {_num(s.part) for s in b.series if _num(s.part)}
+    ot, op = positions(ours)
+    tt, tp = positions(theirs)
+    if ot and not tt:
+        return bool(ot & tp)
+    if tt and not ot:
+        return bool(tt & op)
+    return True     # both titles carry positions (sameMamTitle compared them) or neither does
 
 
 def _oneLine(text):
@@ -1315,13 +1344,14 @@ class MAMBook:
         """Config/mam/accept_unsnatched: the file-name searches found rows but none marked my_snatched. That is usually
         the release's own torrent: the hook runs booktree minutes after a download and MAM sets my_snatched later.
         `pool` holds those rows as (key, Book, file types), from both searches. A row is accepted only when it is the
-        one row (by MAM id) that has the release's file type, one of its authors (exact, as for snatched rows) and the
-        same title (sameMamTitle: no sibling volume, part, bundle or other production); two or more are ambiguous and
+        one row (by MAM id) that has the release's file type, one of its authors (exact, as for snatched rows), the same
+        title (sameMamTitle: no sibling volume, part, bundle or other production) and the same series position
+        (samePosition: a "Book N" in one title against the other's title or series part); two or more are ambiguous and
         none is used. MAM rows carry no runtime. Returns [the Book] or []."""
         if book is None:
             return []
         parsed = self.getParsedName(book, cfg) or {}
-        title = str(book.title or "")
+        title = _clip(book.title)
         # a title that only repeats the release name is junk, unless the release name is just the title
         junk = myx_names.isJunkTitle(title) or (myx_names.isJunkTitle(title, parsed.get("source") or self.name) and
                                                 _titleWords(parsed.get("title") or "") != _titleWords(title))
@@ -1332,9 +1362,11 @@ class MAMBook:
         rows = {}
         for key, abook, types in pool:
             rows.setdefault(key, (abook, types))
+        # the silent checks first: isThisMyAuthorsBook prints the row's title (verbose), and a row that is not ours
+        # need not reach stdout
         passed = [abook for abook, types in rows.values()
-                  if ext and ext in types and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)
-                  and sameMamTitle(title, abook.title, [x.name for x in abook.series])]
+                  if ext and ext in types and sameMamTitle(title, abook.title, [x.name for x in abook.series])
+                  and samePosition(book, abook) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)]
         if len(passed) == 1:
             print(f"No snatched MAM match; using the only unsnatched one that passes the checks: "
                   f"{_oneLine(passed[0].title)} by {_oneLine(passed[0].getAuthors())}")
