@@ -22,7 +22,9 @@ done
 # BOOKTREE_REPLAY_LIVE=1: uncached Audible queries are fetched from the real API and cached into the staged copy
 CFG_MODE=ro; LIVE=()
 if [ "${BOOKTREE_REPLAY_LIVE:-0}" = "1" ]; then CFG_MODE=rw; LIVE=(--audible-live); fi
-docker run --rm --user root -e PYTHONDONTWRITEBYTECODE=1 -w /booktree \
+# a named container (override with BOOKTREE_REPLAY_NAME) so a hung replay can be stopped by that exact name,
+# never by image: production containers on the same host share base images
+docker run --rm --name "${BOOKTREE_REPLAY_NAME:-review-replay-$$-$RANDOM}" --user root -e PYTHONDONTWRITEBYTECODE=1 -w /booktree \
   -v "$CODE:/booktree:ro" -v "$REPO/tests/replay:/replay:ro" -v "$LOGS:/logs:ro" -v "$STAGE/Config:/Config:$CFG_MODE" -v "$OUT:/out" \
   "$IMAGE" /venv/bin/python3 /replay/replay_corpus.py \
   --config pass1=/Config/config.json --config pass2=/Config/config-audible.json --out /out "${LIVE[@]}" "$@"
