@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import re
 import time
 from pprint import pprint
 import myx_classes
@@ -16,6 +17,7 @@ import myx_session
 _lastMamRequest = 0.0
 _mamQueriesThisRun = 0
 _cookieTestedThisRun = False
+_mamTroubleThisRun = False
 _warnedKnobs = set()
 _sleep = time.sleep
 _now = time.time
@@ -56,10 +58,11 @@ def _budgetLeft(cfg):
 
 
 def resetRunCounters():
-    global _mamQueriesThisRun, _lastMamRequest, _cookieTestedThisRun
+    global _mamQueriesThisRun, _lastMamRequest, _cookieTestedThisRun, _mamTroubleThisRun
     _mamQueriesThisRun = 0
     _lastMamRequest = 0.0
     _cookieTestedThisRun = False
+    _mamTroubleThisRun = False
     myx_session.reset()
 
 
@@ -72,15 +75,13 @@ def _newSession(cfg):
     return sess, value, source
 
 
+#the fields upstream's file-name search looks in (searchMAM); the title fallback looks in title and author only
+SRCHIN_ALL = {"title": "true", "author": "true", "fileTypes": "true", "filenames": "true"}
+SRCHIN_TITLE_AUTHOR = {"title": "true", "author": "true"}
+
+
 #MAM Functions
 def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
-    global _mamQueriesThisRun
-    #Config
-    verbose = bool(cfg.get("Config/flags/verbose"))
-
-    ebook = bool(cfg.get("Config/flags/ebooks"))
-    audiobook = not (ebook)
-    
     #put paren around authors and titleFilename
     if len(authors):
         authors = f'({authors})'
@@ -92,7 +93,42 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
 
     #cache results for this search string
     cacheKey=myx_utilities.getHash(search)
-    
+    return _search(cfg, search, cacheKey, SRCHIN_ALL, refresh)
+
+
+def titleFallbackEnabled(cfg):
+    """Config/mam/title_fallback (default 0 = off): search MAM by title and author when the file-name searches
+    found nothing usable (see searchMAMByTitle). Not after a MAM request failed this run (cookie refused, MAM
+    unreachable, an error answer): the extra search would only add one more failing request per release."""
+    return _knob(cfg, "title_fallback", 0, 0, 1, int) == 1 and not _mamTroubleThisRun
+
+
+def titleFallbackQuery(title, authors):
+    """(search text, cache key) of the title/author fallback. `authors` is a list of names. The text uses the same
+    escaping as the file-name search; the cache key also names the search fields, so it can never coincide with the
+    key of a file-name search, whose fields differ for the same text."""
+    names = "|".join(f'"{escape_string(a)}"' for a in authors)
+    search = f'({names}) {escape_string(title)} @dummy mamDummy'
+    return search, myx_utilities.getHash(f"{search} srchIn:title,author")
+
+
+def searchMAMByTitle(cfg, title, authors, refresh=False):
+    """MAM's title and author fields (not the file-name index) for `title` by any of `authors`; the raw rows, or None.
+    Same throttle, per-run budget, cookie handling and cache as searchMAM."""
+    search, cacheKey = titleFallbackQuery(title, authors)
+    return _search(cfg, search, cacheKey, SRCHIN_TITLE_AUTHOR, refresh)
+
+
+def _search(cfg, search, cacheKey, srchIn, refresh):
+    global _mamQueriesThisRun
+    #Config
+    verbose = bool(cfg.get("Config/flags/verbose"))
+
+    ebook = bool(cfg.get("Config/flags/ebooks"))
+    audiobook = not (ebook)
+    #JSON log: mark the title fallback's queries (nothing is added to the file-name searches' entries)
+    tag = {} if srchIn is SRCHIN_ALL else {"search": "title-author"}
+
     cachedResults = None
     if myx_utilities.isCached(cacheKey, "mam", cfg, refresh=refresh):
         #this search has been done before, load results from cache
@@ -103,12 +139,12 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
 
     if cachedResults is not None:
         data = cachedResults.get("data")
-        myx_jsonlog.noteQuery("mam", cacheKey, True, len(data or []), text=search)
+        myx_jsonlog.noteQuery("mam", cacheKey, True, len(data or []), text=search, **tag)
         return data
 
     elif not _budgetLeft(cfg):
         print(f"MAM query budget for this run exhausted ({_mamQueriesThisRun} searches): skipping MAM search")
-        myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search, skipped="budget")
+        myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search, skipped="budget", **tag)
         return None
 
     else:
@@ -117,7 +153,7 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
 
         #test session and cookie (once per run: every request to MAM costs a throttle slot; checkMAMCookie at
         #start-up already counts)
-        global _cookieTestedThisRun
+        global _cookieTestedThisRun, _mamTroubleThisRun
         try:
             if not _cookieTestedThisRun:
                 _throttle(cfg)
@@ -140,12 +176,7 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
             params = {
                 "tor": {
                     "text": search,  # The search string.
-                    "srchIn": {
-                        "title": "true",
-                        "author": "true",
-                        "fileTypes": "true",
-                        "filenames": "true"
-                    },
+                    "srchIn": dict(srchIn),
                     "main_cat": mam_categories
                 },
                 "perpage":50
@@ -161,7 +192,7 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
                 if r.text == '{"error":"Nothing returned, out of 0"}':
                     #an empty answer is a real answer: cache it under the short "empty" TTL (myx_cache)
                     myx_utilities.cacheMe(cacheKey, "mam", {"data": [], "total": 0, "found": 0, "perpage": 50, "start": 0}, cfg)
-                    myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search)
+                    myx_jsonlog.noteQuery("mam", cacheKey, False, 0, text=search, **tag)
                     return None
                 if r.status_code != 200:
                     raise Exception(f'search failed with status {r.status_code}')
@@ -173,64 +204,92 @@ def searchMAM(cfg, titleFilename, authors, extension, refresh=False):
 
                 #cache every successful answer; myx_cache gives answers without a snatched entry the short TTL
                 myx_utilities.cacheMe(cacheKey, "mam", results, cfg)
-                myx_jsonlog.noteQuery("mam", cacheKey, False, len(data), text=search)
+                myx_jsonlog.noteQuery("mam", cacheKey, False, len(data), text=search, **tag)
                 return data
             
             except Exception as e:
+                _mamTroubleThisRun = True
                 print(f'error searching MAM {e}')
         except Exception as e:
+            _mamTroubleThisRun = True
             print(f'error searching MAM {e}')
             
     return None
+
+def _rowToBook(b):
+    """One row of a MAM search answer as a Book (snatched set from my_snatched)."""
+    book=myx_classes.Book()
+    book.init()
+    if 'asin' in b: 
+        book.asin=str(b["asin"])
+    if 'title' in b: 
+        book.title=str(b["title"])
+    if 'author_info'in b:
+        #format {id:author, id:author}
+        if len(b["author_info"]):
+            authors = json.loads(b["author_info"])
+            book.authors.extend(myx_classes.contributors(str(author) for author in authors.values()))
+    if 'narrator_info'in b:
+        #format {id:narrator, id:narrator}
+        if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
+            narrators = json.loads(b["narrator_info"])
+            book.narrators.extend(myx_classes.contributors(str(narrator) for narrator in narrators.values()))
+    if 'series_info'in b:
+        #format {"35598": ["Kat Dubois", "5"]}
+        if ((not b["series_info"] is None) and len(b["series_info"])):
+            series_info = json.loads(b["series_info"])
+            for series in series_info.values():
+                # a value that is not a list (null, a number, a bare string that list() would split into
+                # letters) or one with no name is not a series entry: skip it rather than abort the run
+                if not isinstance(series, (list, tuple)):
+                    continue
+                s=list(series)
+                if not s or s[0] in (None, ""):
+                    continue
+                seriesName = str(s[0])
+                seriesName = seriesName.replace("&#039;", "'")
+                # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
+                # and abort the run, or become "None" and file as "Series #None - Title"
+                part = s[1] if len(s) > 1 else ""
+                book.series.append(myx_classes.Series(seriesName, part))
+    if 'lang_code' in b:
+        book.language=myx_utilities.getLanguage((b["lang_code"]))
+    if 'my_snatched' in b:
+        book.snatched=bool((b["my_snatched"])) 
+    
+    return book
+
 
 def getMAMBook(cfg, titleFilename="", authors="", extension="", refresh=False):
     books=[]
     mamBook=searchMAM(cfg, titleFilename, authors, extension, refresh=refresh)
     if (mamBook is not None):
         for b in mamBook:
-            #pprint(b)
-            book=myx_classes.Book()
-            book.init()
-            if 'asin' in b: 
-                book.asin=str(b["asin"])
-            if 'title' in b: 
-                book.title=str(b["title"])
-            if 'author_info'in b:
-                #format {id:author, id:author}
-                if len(b["author_info"]):
-                    authors = json.loads(b["author_info"])
-                    book.authors.extend(myx_classes.contributors(str(author) for author in authors.values()))
-            if 'narrator_info'in b:
-                #format {id:narrator, id:narrator}
-                if ((not b["narrator_info"] is None) and len(b["narrator_info"])):
-                    narrators = json.loads(b["narrator_info"])
-                    book.narrators.extend(myx_classes.contributors(str(narrator) for narrator in narrators.values()))
-            if 'series_info'in b:
-                #format {"35598": ["Kat Dubois", "5"]}
-                if ((not b["series_info"] is None) and len(b["series_info"])):
-                    series_info = json.loads(b["series_info"])
-                    for series in series_info.values():
-                        # a value that is not a list (null, a number, a bare string that list() would split into
-                        # letters) or one with no name is not a series entry: skip it rather than abort the run
-                        if not isinstance(series, (list, tuple)):
-                            continue
-                        s=list(series)
-                        if not s or s[0] in (None, ""):
-                            continue
-                        seriesName = str(s[0])
-                        seriesName = seriesName.replace("&#039;", "'")
-                        # a series without a part is ["Name"] or ["Name", null]; s[1] used to IndexError
-                        # and abort the run, or become "None" and file as "Series #None - Title"
-                        part = s[1] if len(s) > 1 else ""
-                        book.series.append(myx_classes.Series(seriesName, part))
-            if 'lang_code' in b:
-                book.language=myx_utilities.getLanguage((b["lang_code"]))
-            if 'my_snatched' in b:
-                book.snatched=bool((b["my_snatched"])) 
-            
+            book=_rowToBook(b)
             if book.snatched:
                 books.append(book)
 
+    return books
+
+
+def _fileTypes(row):
+    """The file types of a MAM row ("m4b", "mp3 m4b", ...) as a set of lower-case words."""
+    return set(re.findall(r"[a-z0-9]+", str(row.get("filetype") or "").lower()))
+
+
+def getMAMBookByTitle(cfg, title, authors, extension, refresh=False):
+    """The title/author fallback: every row whose file type is the release's (`extension`, without the dot), as Books.
+    Unlike getMAMBook the rows are NOT limited to torrents marked my_snatched; Book.snatched says which are, and the
+    caller decides (MAMBook.getMAMTitleFallback)."""
+    rows = searchMAMByTitle(cfg, title, authors, refresh=refresh)
+    ext = str(extension or "").strip().strip('"').lower()
+    books = []
+    for b in rows or []:
+        if isinstance(b, dict) and ext and ext in _fileTypes(b):
+            try:
+                books.append(_rowToBook(b))
+            except (TypeError, ValueError, AttributeError, RecursionError):
+                continue    # a malformed row (author_info that is not JSON, ...) is skipped, never the run
     return books
 
 def testSessionCookie(mySession, cfg=None):

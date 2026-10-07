@@ -16,10 +16,122 @@ import myx_mam
 import myx_hints
 import myx_names
 import copy
+import html
+from thefuzz import fuzz
 
 #Module variables
 authMode="login"
 verbose=False
+
+#MAM title fallback (Config/mam/title_fallback, MAMBook.getMAMTitleFallback)
+MAM_FALLBACK_TITLE_MIN = 90      # token-sort ratio for the main titles, and for the subtitles when both have one
+MAM_FALLBACK_MAX_AUTHORS = 5
+MAM_FALLBACK_MAX_AUTHOR = 100     # characters per author name in the query
+MAM_FALLBACK_MAX_TITLE = 200
+_SUBTITLE_SPLIT = re.compile(r"\s*:\s*|\s+[-\u2013\u2014]\s+")
+_SERIES_POSITION = re.compile(r"\bbook\s*\d+(?:\.\d+)?\b", re.IGNORECASE)
+# a subtitle that only MAM has and that names a bundle or a part, not this book ("Dune: The Complete Saga",
+# "Dune: Part One"); checked on the raw subtitle, before noise words such as "complete" are removed
+_BUNDLE_WORDS = re.compile(r"\b(?:complete|saga|collection|box\s*set|boxed|omnibus|trilogy|series|books|volumes?|"
+                           r"vol|bundle|part|chapter|episode|season)\b", re.IGNORECASE)
+# numbers that tell volumes apart, written out or as roman numerals ("Volume II", "Part One")
+_NUMBER_WORDS = {w: str(n) for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+    "eighteen nineteen twenty".split())}
+_NUMBER_WORDS.update({w: str(n) for n, w in enumerate(
+    "_ i ii iii iv v vi vii viii ix x xi xii xiii xiv xv xvi xvii xviii xix xx".split()) if n})
+_EDITION = re.compile(r"(?<!un)\babridged\b|\bdramati[sz]ed\b|\bdramati[sz]ation\b|\bgraphic\s?audio\b|\bfull\s?cast\b",
+                      re.IGNORECASE)
+_NUMBER_WORDS.update({"first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5"})
+
+
+def _titleWords(text):
+    """Lower-case words for comparing titles: HTML entities decoded (MAM rows carry &#039; and &amp;), accents and
+    apostrophes removed ("Ender's" = "Enders", "Shōgun" = "Shogun"), noise words (Unabridged, m4b, ...) and other
+    punctuation removed."""
+    t = html.unescape(str(text or "")).replace("&", " and ")
+    t = myx_utilities.strip_accents(re.sub(r"['\u2019]", "", t))
+    t = myx_names.NOISE_WORD.sub(" ", t)
+    return " ".join(re.sub(r"[^\w\s]|_", " ", t).lower().split())
+
+
+def _numbers(words):
+    """The numbers in a _titleWords string: digits, number words and roman numerals ("i" counts: "Volume I")."""
+    return sorted(w if w.isdigit() else _NUMBER_WORDS[w] for w in words.split() if w.isdigit() or w in _NUMBER_WORDS)
+
+
+def _clip(title):
+    """html-unescaped, whitespace collapsed and cut to 2 x MAM_FALLBACK_MAX_TITLE: id3 tags and MAM rows are untrusted,
+    and the title regexes are only linear on bounded, collapsed input."""
+    return " ".join(html.unescape(str(title or ""))[:MAM_FALLBACK_MAX_TITLE * 4].split())[:MAM_FALLBACK_MAX_TITLE * 2]
+
+
+def _edition(title):
+    """Markers of a different production of the same title: abridged (not unabridged), dramatised, GraphicAudio."""
+    return sorted(set(m.lower().replace(" ", "")[:6] for m in _EDITION.findall(title)))
+
+
+def _titleParts(title):
+    """(main title, subtitle, raw subtitle): the first two as _titleWords with "Book N" series positions dropped and a
+    "a novel" style subtitle emptied; the raw subtitle only html-unescaped."""
+    t = _clip(title)
+    t = re.sub(r"\s*\((?:un)?abridged\)", "", t, flags=re.IGNORECASE)
+    parts = _SUBTITLE_SPLIT.split(t, maxsplit=1)
+    raw = parts[1] if len(parts) > 1 else ""
+    main = _titleWords(_SERIES_POSITION.sub(" ", parts[0]))
+    sub = _titleWords(_SERIES_POSITION.sub(" ", raw))
+    if myx_names.SUBTITLE_NOISE.match(sub):
+        sub, raw = "", ""
+    return main, sub, raw
+
+
+def sameMamTitle(ours, theirs, series=()):
+    """The title gate of the MAM title fallback: the same book, not a sibling volume, a box set or another part.
+    Main titles must agree (token-sort ratio >= MAM_FALLBACK_TITLE_MIN) and carry the same numbers, also written out
+    or in roman numerals ("Part 1" is not "Part 2", "Volume II" is not "Volume I"); when both have a subtitle those
+    must agree too ("Cradle: Unsouled" is not "Cradle: Soulsmith"); a subtitle only we have is refused ("Thrawn:
+    Treason" is not "Thrawn"); one only MAM has is accepted only when it is the name of the candidate's own series
+    (`series`, from MAM's series_info) and names no bundle or part: "Leviathan Wakes: The Expanse, Book 1" in series
+    The Expanse yes; "Dune: The Complete Saga", "Dune: Part One", "Mistborn: Secret History" no."""
+    om, osub, _ = _titleParts(ours)
+    tm, tsub, traw = _titleParts(theirs)
+    if not om or not tm or fuzz.token_sort_ratio(om, tm) < MAM_FALLBACK_TITLE_MIN:
+        return False
+    # "Book 2" is not "Book 3" (the positions are dropped from the words compared below), and an abridged, dramatised
+    # or GraphicAudio production is not the plain one
+    position = lambda t: sorted(re.findall(r"\d+(?:\.\d+)?", " ".join(_SERIES_POSITION.findall(_clip(t)))))  # noqa: E731
+    if position(ours) != position(theirs) and position(ours) and position(theirs):
+        return False
+    if _edition(_clip(ours)) != _edition(_clip(theirs)):
+        return False
+    if _numbers(f"{om} {osub}") != _numbers(f"{tm} {tsub}"):
+        return False
+    if osub and tsub:
+        return fuzz.token_sort_ratio(osub, tsub) >= MAM_FALLBACK_TITLE_MIN
+    if osub:
+        return False
+    if _BUNDLE_WORDS.search(traw):          # also when noise-word removal left nothing ("Dune: Complete")
+        return False
+    if not tsub:
+        return True
+    names = [_titleWords(n) for n in series or ()]
+    return any(n and fuzz.token_set_ratio(n, tsub) >= MAM_FALLBACK_TITLE_MIN for n in names)
+
+
+def _oneLine(text):
+    """An untrusted field (id3 tag, MAM row) for a one-line message: whitespace and control characters collapsed."""
+    return " ".join("".join(c if c.isprintable() else " " for c in str(text or "")).split())[:MAM_FALLBACK_MAX_TITLE]
+
+
+def mamFallbackTitle(title):
+    """The words searched for in MAM's title field: the main title (cleanseTitle drops "(Unabridged)", m4b/mp3,
+    "Book N" and the subtitle after ':'; noise words and punctuation go too), lower case so that a title word such as
+    MAYBE or NEAR is never read as a search operator, apostrophes (also typographic ones) kept for the escaping, at
+    most MAM_FALLBACK_MAX_TITLE characters; "" if nothing is left."""
+    t = _clip(title).replace("\u2019", "'")
+    t = myx_names.NOISE_WORD.sub(" ", myx_utilities.cleanseTitle(t, stripaccents=False))
+    return " ".join(re.sub(r"[^\w\s']|_", " ", t).lower().split())[:MAM_FALLBACK_MAX_TITLE].strip()
+
 
 #Author and Narrator Classes
 @dataclass
@@ -483,6 +595,7 @@ class MAMBook:
     parsedName:dict=None
     refresh:bool=False
     matchAttempt:str=""
+    mamAttempt:str=""
 
     def getRunTimeLength(self):
         #add all the duration of the files in the book, and convert into minutes
@@ -1114,6 +1227,16 @@ class MAMBook:
             print(f"Widening MAM search using just\n\tTitleFilename: {title}")
             books=myx_mam.getMAMBook(cfg, titleFilename=title, extension=extension, refresh=self.refresh)
 
+        # Config/mam/title_fallback: neither file-name search gave a usable (snatched) torrent; one more search by
+        # title and author, whose candidates are already gated (getMAMTitleFallback)
+        # (not when the ranking below would not run: it only runs with verbose on, an upstream quirk, so the search
+        # would be spent for nothing)
+        fromTitleFallback = False
+        ranks = verbose or ebooks or (rankBook if rankBook is not None else self.ffprobeBook) is None
+        if len(books) == 0 and ranks and myx_mam.titleFallbackEnabled(cfg):
+            books = self.getMAMTitleFallback(cfg, rankBook if rankBook is not None else self.ffprobeBook, bookFile)
+            fromTitleFallback = bool(books)
+
         #Find the best match
         self.mamMatches = books
         book = rankBook if rankBook is not None else self.ffprobeBook
@@ -1156,8 +1279,8 @@ class MAMBook:
                     targetBook = '|'.join([book.title, book.getAuthors(), book.getSeriesParts()])
             
                     for abook in books:
-                        #if this book is snatched, include in the match
-                        if abook.snatched:
+                        #if this book is snatched, include in the match (title fallback candidates passed its gates)
+                        if abook.snatched or fromTitleFallback:
                             #the author is known, check if this book is this authors book
                             #otherwise, if maybe this title is close enough
                             #print (f"{abook.title} by {abook.authors}...")
@@ -1189,12 +1312,56 @@ class MAMBook:
                 self.bestMAMMatch = books[0]
 
 
+        if fromTitleFallback and self.bestMAMMatch is not None:
+            self.matchAttempt = "mam-title"
+            self.mamAttempt = "title"
+
         #pprint(self.bestMAMMatch)
         if (books is not None): 
             return self.bestMAMMatch
         else: 
             return None
     
+    def getMAMTitleFallback(self, cfg, book, bookFile):
+        """Config/mam/title_fallback: one MAM search in the title and author fields for the best title we have (the
+        id3 title, or the parsed one where the tag is junk) by its author(s). It runs only after both file-name
+        searches found no snatched torrent; those usually did find the release's own torrent, just not yet marked
+        my_snatched (MAM sets that flag some time after the download, and the hook runs minutes after it). So the
+        candidates are not limited to my_snatched; instead a candidate must have the release's file type, one of its
+        authors and the same title (sameMamTitle), and it is used only when it is the one candidate left: two or more
+        are ambiguous, snatched or not (a snatched one here is usually another volume or edition, since the file-name
+        searches would have found this release's). Returns the candidate, or []."""
+        if book is None:
+            return []
+        parsed = self.getParsedName(book, cfg) or {}
+        title = str(book.title or "")
+        names = [a.name.strip()[:MAM_FALLBACK_MAX_AUTHOR] for a in book.authors if (a.name or "").strip()][:MAM_FALLBACK_MAX_AUTHORS]
+        qtitle = mamFallbackTitle(title)
+        # a title that only repeats the release name is junk, unless the release name is just the title
+        parsedTitle = parsed.get("title") or ""
+        junk = myx_names.isJunkTitle(title) or (myx_names.isJunkTitle(title, parsed.get("source") or self.name) and
+                                                _titleWords(parsedTitle) != _titleWords(title))
+        if junk or not qtitle or not names or myx_names.isJunkAuthors(names):
+            print("No usable title and author for the MAM title search, skipping it")
+            return []
+        print(f"No snatched MAM match by file name, MAM title search: {qtitle} | by: {_oneLine(', '.join(names))}")
+        try:
+            found = myx_mam.getMAMBookByTitle(cfg, qtitle, names, bookFile.getExtension(), refresh=self.refresh)
+        except Exception as e:      # an optional extra search must never cost the book its Audible step or the run
+            print(f"error in the MAM title search {type(e).__name__}: {e}")
+            return []
+        passed = [b for b in found if myx_utilities.isThisMyAuthorsBook(book.authors, b, cfg)
+                  and sameMamTitle(title, b.title, [x.name for x in b.series])]
+        if len(passed) == 1:
+            mark = "" if passed[0].snatched else " (not marked snatched yet)"
+            print(f"Using the only MAM title match{mark}: {_oneLine(passed[0].title)} by {_oneLine(passed[0].getAuthors())}")
+            return passed
+        if passed:
+            print(f"{len(passed)} MAM title matches: ambiguous, not using any")
+        else:
+            print(f"No MAM title match passed the title, author and file type check ({len(found)} result(s))")
+        return []
+
     def getHashKey(self):
         return myx_utilities.getHash(self.name)
 

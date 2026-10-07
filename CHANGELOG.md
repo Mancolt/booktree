@@ -6,6 +6,18 @@ first release is 3.0.0 because exit codes and the cookie store changed in ways a
 
 ## Unreleased
 
+### Added
+- `mam/title_fallback` (default off): when neither MAM file-name search finds a snatched torrent, one more MAM
+  search in the title and author fields, for the id3 (or parsed) main title and author(s). Seen 2026-10-07 with
+  *Before She Knew Him* (Peter Swanson) and every other recent MAM-pass miss: both file-name searches returned the
+  release's own torrent, but booktree ran minutes after the download and MAM had not marked it `my_snatched` yet,
+  so the release was left unmatched in the MAM pass. The fallback's candidates need not be snatched, so each must
+  have the release's file type, one of its authors and the same title (same numbers and subtitle: no sibling
+  volume, part or box set), and exactly one candidate must be left. At most one extra MAM search per release that
+  had no snatched result, through the same spacing, budget, session and cache, and none after a failed MAM request
+  in the run; the existing searches and their cache keys are unchanged. JSON log: `mam_attempt: "title"` on the
+  book, `search: "title-author"` on the query. See CONFIG.md, MAM title fallback.
+
 ## 3.0.5 - 2026-10-06
 
 ### Fixed

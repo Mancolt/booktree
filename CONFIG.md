@@ -64,6 +64,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | cache/mam_empty_hours | | How long an empty MAM answer (or one without a snatched entry) is reused | 24 |
 | mam/min_interval_seconds | | Minimum spacing between HTTP requests to MAM (cache hits are free) | 6 |
 | mam/max_queries_per_run | | Runaway guard: maximum MAM searches in one run (one container invocation); further searches are skipped with a message and those releases stay unmatched until the next run (0 = unlimited). The 6-second spacing is the real safety net; this only stops a loop | 3000 |
+| mam/title_fallback | | 1 = when neither file-name search found a snatched torrent, search MAM once more in its title and author fields (at most one extra search per such release; see [MAM title fallback](#mam-title-fallback-mamtitle_fallback-default-off)) | 0 |
 | json_log | | Path of a JSON-lines run log, or `true` for `booktree_log_<timestamp>.jsonl` next to the CSV; same as `--json-log` | |
 | refresh | | List of releases (name or path) to re-process ignoring cached answers and the processed marker; same as `--refresh` | |
 | pins | | List of `RELEASE=ASIN` strings: use that Audible ASIN for the release and re-process it now; same as `--pin` (see [Correcting a match](#correcting-a-match)) | |
@@ -309,7 +310,7 @@ errors and HTTP failures are never cached; an Audible per-ASIN answer without a 
 snatched entry count as empty. Every HTTP request to MAM is spaced `mam/min_interval_seconds` apart, which is the
 protection that matters; `mam/max_queries_per_run` (3000) exists only to stop a runaway process. An unmatched
 release costs two searches (the initial one and the widened retry), so 3000 covers a first run over about 1,500
-unmatched releases.
+unmatched releases (three searches with `mam/title_fallback` on).
 
 Note for existing installations: cache entries older than their TTL are retried the next time a release that
 uses them is processed. Releases already matched and hardlinked are never re-searched (their processed marker does
@@ -319,6 +320,42 @@ apart, and afterwards once per TTL.
 `--refresh RELEASE` (repeatable; or `"refresh": true` in a hint) re-processes one release: its cached answers and
 its "already processed" marker are ignored while everything else is served from cache. `--no-cache` still does this
 for the whole run.
+
+### MAM title fallback (`mam/title_fallback`, default off)
+
+The MAM pass searches MAM's file-name index for the release's file name (with its authors, then without) and keeps
+only torrents MAM marks as snatched by you (`my_snatched`), so the match is the torrent you downloaded. booktree
+usually runs minutes after a download completes, and MAM sets that mark some time later: the search finds the
+release's own torrent, not yet marked, and the release stays unmatched in the MAM pass (seen with every
+MAM-pass miss in October 2026, such as *Before She Knew Him* by Peter Swanson).
+
+With `"mam": {"title_fallback": 1}` such a release gets one more search, in MAM's title and author fields: the
+main title in lower case (the id3 title, or the one parsed from the release name where the tag is junk; subtitle
+after `:`, `(Unabridged)`, codec and `Book N` noise removed) and the author names, for example
+`("Peter Swanson") before she knew him @dummy mamDummy`. Its cache file is named by the sha256 of that text followed
+by ` srchIn:title,author`, so it never coincides with a file-name search, whose text and key are unchanged. It runs
+only when both file-name searches gave no snatched torrent and the release has a usable title and author; not with
+`flags/verbose` 0 (booktree then does not rank MAM results at all), and not after a MAM request failed during the
+run (cookie refused, MAM unreachable). It goes through the same spacing, per-run budget, session and cache, so it
+costs at most one search per such release.
+
+Its results are not limited to snatched torrents, so a candidate must have the release's file type (`m4b`, `mp3`,
+...), one of its authors (the same name, as for the other MAM searches), and the same title: main titles with a
+token-sort ratio of 90 or more and the same numbers (also written out or as roman numerals), matching subtitles
+when both have one, no subtitle that only the release has, and a subtitle that only MAM has only when it is the name
+of that torrent's own series and names no bundle or part. So *The Viscount and the Witch* is not *The Witch*,
+*Cradle: Soulsmith* is not *Cradle: Unsouled*, *Part 1* is not *Part 2*, *Volume II* is not *Volume I*, *Dune: The
+Complete Saga* and *Dune: Part One* are not *Dune*, *Mistborn: Secret History* is not *Mistborn*, while *Leviathan
+Wakes: The Expanse, Book 1* in the series The Expanse is *Leviathan Wakes*. The match is used only when exactly one candidate
+passes; two or more are ambiguous, snatched or not. MAM rows carry no runtime, so this title gate is the only check:
+in `mam-audible` the Audible search that follows is built from the MAM match's title and authors, and the Audible
+runtime there is a preference, not a rejection, so a wrong MAM match would carry through to Audible. The JSON log
+marks such a book with `mam_attempt: "title"` and the query with `search: "title-author"` (and `match.attempt` is
+`mam-title` when the MAM record is the one filed).
+
+It is off by default because it is the one place where booktree accepts a MAM torrent not marked as yours, judged
+by title, author and file type alone. Turn it on for the config that uses `mam` or `mam-audible` if its unmatched
+releases are mostly fresh downloads.
 
 ## JSON run log (`--json-log [PATH]`)
 
@@ -344,7 +381,7 @@ The CSV columns, file name and stdout are unchanged; the JSON log is the structu
 ~~~
 
 `match.attempt` says what produced the match: `pinned`, `candidates`, `parsed`, `parsed-authors`, `swapped`,
-`title-only`, `legacy` (upstream's own search), `mam`, or `log` (taken from the input log in `log` mode).
+`title-only`, `legacy` (upstream's own search), `mam`, `mam-title` (the MAM match came from the MAM title fallback; see also `mam_attempt`), or `log` (taken from the input log in `log` mode).
 `queries[].cache_key` is the hash printed in `Checking cache: <kind>/<hash>`; a query that failed carries `error`,
 one skipped by the MAM budget carries `skipped`. `id3.duration_s` is the first file's duration while
 `expected_duration_min` is the whole release. One `run` record is written per `paths` entry. Give the path as

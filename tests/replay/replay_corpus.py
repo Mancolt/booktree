@@ -60,8 +60,11 @@ class LiveAudibleClient:
 
 class _OfflineSession:
     def __init__(self):
+        from requests.cookies import RequestsCookieJar
         self.headers = {}
-        self.cookies = None
+        # a real jar: searchMAM puts the cookie in it before the first request, so with cookies=None an uncached MAM
+        # search raised AttributeError outside searchMAM's error handling and the book's Audible step never ran
+        self.cookies = RequestsCookieJar()
     def get(self, *a, **k):
         raise _Offline("offline replay: network disabled")
     def post(self, *a, **k):
@@ -85,7 +88,8 @@ def load_cfg(path, cache_path, log_path):
         #the staged cache is a snapshot: replays compare code, not wall-clock expiry, MAM pacing or budgets
         cfg._data["Config"]["cache"] = {k: 10**9 for k in ("audible_positive_hours", "audible_empty_hours",
                                                           "mam_positive_hours", "mam_empty_hours")}
-        cfg._data["Config"]["mam"] = {"min_interval_seconds": 0, "max_queries_per_run": 0}
+        #merged, not replaced: other Config/mam settings (title_fallback) are part of the code under test
+        cfg._data["Config"]["mam"] = {**(cfg._data["Config"].get("mam") or {}), "min_interval_seconds": 0, "max_queries_per_run": 0}
     return cfg
 
 
