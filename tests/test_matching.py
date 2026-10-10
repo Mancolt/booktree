@@ -202,6 +202,52 @@ class TaggedAsinFallbackTest(unittest.TestCase):
         self.assertNotIn("gave no usable Audible match", out)
         self.assertFalse(any(u.endswith("/catalog/products") for u, _ in client.calls))
 
+    def test_tagged_asin_of_another_book_by_the_same_author_falls_back(self):
+        # leftover AUDIBLE_ASIN from another title by the same author: the per-ASIN product exists,
+        # the author gate passes, and token_sort of the comparison strings is 77 (>= matchrate 60),
+        # so #23's fallback never ran and the file was filed as the other book
+        other = product("B0WATER000", "Into the Water", ["Paula Hawkins"], 672)
+        real = product("B0TRAIN000", "The Girl on the Train", ["Paula Hawkins"], 660)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0WATER000": other}, search=[real])
+            mb = mambook("Paula Hawkins - The Girl on the Train",
+                         id3_book("The Girl on the Train", ["Paula Hawkins"], 660 * 60, asin="B0WATER000"))
+            best, out = run(mb, client, cfg)
+        self.assertIn("Tagged ASIN B0WATER000 gave no usable Audible match", out)
+        self.assertEqual(best.asin, "B0TRAIN000")
+        self.assertEqual(best.title, "The Girl on the Train")
+        self.assertTrue(mb.matchAttempt.startswith("asin-fallback:"), mb.matchAttempt)
+
+    def test_live_tagged_asin_still_accepted_when_id3_title_has_unabridged(self):
+        # a correct tag whose Audible title is the id3 title without "(Unabridged)" must not fall back
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0FBHZK5V7": self.real}, search=[])
+            mb = mambook("This Book Made Me Think of You - Libby Page.m4b",
+                         id3_book("This Book Made Me Think of You (Unabridged)", ["Libby Page"], 626.8 * 60,
+                                  asin="B0FBHZK5V7"))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0FBHZK5V7")
+        self.assertNotIn("gave no usable Audible match", out)
+        self.assertFalse(any(u.endswith("/catalog/products") for u, _ in client.calls))
+
+    def test_junk_id3_title_does_not_let_a_leftover_asin_beat_the_parsed_title(self):
+        # ripper tags: AudioTrack 01, artist ok, leftover ASIN of another book by that author.
+        # The parsed folder title rejects the ASIN; legacy must not retry it against the junk
+        # id3 title (author-only + token_sort 61 would accept Into the Water).
+        other = product("B0WATER000", "Into the Water", ["Paula Hawkins"], 672)
+        real = product("B0TRAIN000", "The Girl on the Train", ["Paula Hawkins"], 660)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(by_asin={"B0WATER000": other}, search=[real])
+            mb = mambook("Paula Hawkins - The Girl on the Train",
+                         id3_book("AudioTrack 01", ["Paula Hawkins"], 660 * 60, asin="B0WATER000"))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0TRAIN000")
+        self.assertEqual(best.title, "The Girl on the Train")
+        self.assertNotEqual(best.asin, "B0WATER000")
+
 
 class SkeletonResultTest(unittest.TestCase):
     def test_skeleton_search_result_is_skipped_not_compared_against_empty_strings(self):

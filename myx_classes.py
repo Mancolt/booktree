@@ -830,7 +830,8 @@ class MAMBook:
     def _rankAudible(self, books, book, keys, cfg, hintCandidates=False, requireTitle=False, runtimeAlone=False):
         """Upstream's interactive / best-match selection over Audible products. Sets audibleMatches and
         bestAudibleMatch. requireTitle: a result must match the title (an author match alone is not enough),
-        used when the title or authors came from the parsed release name rather than from tags."""
+        used when the title or authors came from the parsed release name, or when a tagged ASIN is
+        looked up against a usable id3 title."""
         minMatchRate = int(cfg.get("Config/matchrate"))
         verbose = bool(cfg.get("Config/flags/verbose"))
         add_narrators = bool(cfg.get("Config/flags/add_narrators"))
@@ -994,6 +995,10 @@ class MAMBook:
             # author's other books (a leftover "James Patterson - The Guest" folder with a usable
             # id3 title "The Guest" used to file Patterson's Along Came a Spider)
             requireTitle = "title" in parsedApplied or "authors" in parsedApplied
+            # a per-ASIN lookup ignores title on the wire; with a usable title the author-only gate
+            # would accept that author's other books (Girl on the Train tagged Into the Water)
+            if pAsin and not myx_names.isJunkTitle(parsedBook.title):
+                requireTitle = True
             attempts.append(("parsed", parsedBook, pAsin, requireTitle))
             parsedAuthors = (self.parsedName or {}).get("authors") or []
             if parsedAuthors and "authors" not in parsedApplied and not pAsin and not myx_names.authorsOverlap(
@@ -1012,7 +1017,14 @@ class MAMBook:
                 soloBook.authors = []
                 attempts.append(("title-only", soloBook, "", True))
         #upstream's search, exactly as before; its getAltTitle step runs when this attempt is reached (see caller)
-        attempts.append(("legacy", book, searchAsin, False))
+        #except: a tagged ASIN plus a usable title must still pass the title gate (#23's fallback
+        #for "a different book" only ran when the author gate failed). If the parsed rung already
+        #looked this ASIN up against the release-name title, do not retry it on the junk id3 title
+        #under the author-only gate (AudioTrack 01 + leftover Into the Water ASIN); asin-fallback
+        #searches by title/author instead.
+        if not (searchAsin and "title" in parsedApplied):
+            legacyNeedsTitle = bool(searchAsin) and book is not None and not myx_names.isJunkTitle(book.title)
+            attempts.append(("legacy", book, searchAsin, legacyNeedsTitle))
         #drop attempts that would repeat an identical query with a stricter gate (e.g. title-only then legacy when
         #the tag title is good and the artist tag empty): same result set, cannot succeed where the earlier one failed
         seen = set(); unique = []

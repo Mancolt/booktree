@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- A file whose `AUDIBLE_ASIN` tag pointed at a different book by the same author was filed under that
+  other title. The per-ASIN lookup ignores title, and `_rankAudible` skipped the title gate
+  (`requireTitle` is False on the legacy attempt), so the author-only gate plus `matchrate` 60 accepted
+  the wrong product (token_sort 77 for *The Girl on the Train* tagged as *Into the Water*; also with a
+  junk `AudioTrack 01` title after the parsed folder title had already rejected the ASIN). #23's
+  fallback already handled a dead ASIN or a different author; a usable id3 or parsed title now has
+  to match before a tagged ASIN is accepted, and the existing title/author search runs when it does not.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added
