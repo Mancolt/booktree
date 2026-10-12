@@ -4,6 +4,14 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- `mam/accept_unsnatched`: a series volume whose title does not write "Book N" (the number lives only in
+  id3 `SERIES`/`PART`, or in a parsed folder such as `Author - Title, Book 2`) was accepted against another
+  volume of the same title with a different MAM `series_info` part. `samePosition` now compares those parts,
+  and pickUnsnatched applies the parsed folder part when the tags have none.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added

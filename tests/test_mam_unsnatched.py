@@ -299,6 +299,40 @@ class GateTest(Base):
         self.assertEqual(pick("2").title, "Mother of Learning")
         self.assertEqual(pick("2.0").title, "Mother of Learning")
 
+    def test_series_parts_must_agree_when_neither_title_writes_book_n(self):
+        # id3 title is the series name; the volume lives only in SERIES/PART (or the parsed folder).
+        # samePosition used to return True whenever both titles lacked "Book N", so part 1 was filed as part 2.
+        def pick(ours_part, theirs_part, name="Mother of Learning", title="Mother of Learning", authors=("Domagoj Kurmaic",)):
+            self.td = tempfile.TemporaryDirectory()
+            self.addCleanup(self.td.cleanup)
+            series = ('{"1": ["Mother of Learning", "' + theirs_part + '"]}') if theirs_part else ""
+            mb = release(title=title, authors=authors, name=name, file="Mother of Learning.m4b",
+                         series=[("Mother of Learning", ours_part)] if ours_part else ())
+            best, _, _ = self.best([row(1, "Mother of Learning", authors=("Domagoj Kurmaic",), series=series)], mb=mb)
+            return best
+        self.assertIsNone(pick("1", "2"))
+        self.assertIsNone(pick("2", "1"))
+        self.assertEqual(pick("1", "1").title, "Mother of Learning")
+        self.assertEqual(pick("2", "2.0").title, "Mother of Learning")
+        # a row with no series part is still accepted when our title also has no Book N (cannot refuse the
+        # release's own torrent if MAM omitted series_info)
+        self.assertEqual(pick("1", None).title, "Mother of Learning")
+
+    def test_parsed_folder_part_is_used_when_id3_has_no_series_part(self):
+        # junk tags + "Author - Title, Book 2": applyParsedName sets title/authors, not series. The folder
+        # part must still refuse MAM's part-1 row.
+        def pick(theirs_part):
+            self.td = tempfile.TemporaryDirectory()
+            self.addCleanup(self.td.cleanup)
+            series = ('{"1": ["Mother of Learning", "' + theirs_part + '"]}') if theirs_part else ""
+            mb = release(title="AudioTrack 01", authors=("unknown artist",),
+                         name="Domagoj Kurmaic - Mother of Learning, Book 2", file="Mother of Learning.m4b")
+            best, _, _ = self.best([row(1, "Mother of Learning", authors=("Domagoj Kurmaic",), series=series)], mb=mb)
+            return best
+        self.assertIsNone(pick("1"))
+        self.assertIsNone(pick("3"))
+        self.assertEqual(pick("2").title, "Mother of Learning")
+
     def test_control_characters_in_a_row_never_reach_stdout(self):
         bad = row(1, "Some Other Book\n\ttitle: INJECTED\n\tasin: B000FAKE")
         best, out, _ = self.best([bad, row(2, "Before Sh\x1be Knew Him")])
@@ -347,6 +381,17 @@ class GateTest(Base):
         self.assertTrue(same("Leviathan Wakes", "Leviathan Wakes: The Expanse, Book 1", ["The Expanse"]))
         self.assertFalse(same("Leviathan Wakes", "Leviathan Wakes: The Expanse, Book 1"))
         self.assertFalse(same("Mistborn", "Mistborn: Secret History", ["Mistborn"]))
+        # series parts: neither title writes "Book N", so only the parts distinguish the volumes
+        ours = myx_classes.Book(title="Mother of Learning")
+        ours.series = [myx_classes.Series("Mother of Learning", "1")]
+        other = myx_classes.Book(title="Mother of Learning")
+        other.series = [myx_classes.Series("Mother of Learning", "2")]
+        same_part = myx_classes.Book(title="Mother of Learning")
+        same_part.series = [myx_classes.Series("Mother of Learning", "1")]
+        no_part = myx_classes.Book(title="Mother of Learning")
+        self.assertFalse(myx_classes.samePosition(ours, other))
+        self.assertTrue(myx_classes.samePosition(ours, same_part))
+        self.assertTrue(myx_classes.samePosition(ours, no_part))      # row without series_info is not refused
         for ours, theirs in [("Shogun", "Shōgun"), ("Ender’s Game", "Ender's Game"),
                              ("Across the Fence: Expanded Edition: The Secret War in Vietnam (Unabridged)",
                               "Across the Fence: Expanded Edition - The Secret War in Vietnam"),
