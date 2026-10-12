@@ -133,7 +133,8 @@ def samePosition(ours, theirs):
     """Series position check for an unsnatched MAM row (pickUnsnatched), between two Books: a "Book N" written in one
     title must be matched by the other's title or, failing that, by one of its series parts; when the other side has
     no position at all, the row is refused ("Mother of Learning, Book 2" is not a row "Mother of Learning" that MAM
-    files as part 3, nor one with no part)."""
+    files as part 3, nor one with no part). When neither title writes "Book N" but both books have a series part,
+    those parts must overlap: "Mother of Learning" filed as part 1 is not a row MAM lists as part 2."""
     def positions(b):
         return set(seriesPosition(b.title)), {_num(s.part) for s in b.series if _num(s.part)}
     ot, op = positions(ours)
@@ -142,7 +143,12 @@ def samePosition(ours, theirs):
         return bool(ot & tp)
     if tt and not ot:
         return bool(tt & op)
-    return True     # both titles carry positions (sameMamTitle compared them) or neither does
+    if ot and tt:
+        return True     # both titles carry positions (sameMamTitle compared them)
+    # neither title writes "Book N": series parts must agree when both sides have them
+    if op and tp:
+        return bool(op & tp)
+    return True
 
 
 def _oneLine(text):
@@ -1351,6 +1357,13 @@ class MAMBook:
         if book is None:
             return []
         parsed = self.getParsedName(book, cfg) or {}
+        # applyParsedName copies title/authors, not series/part. A folder "Author - Title, Book 2" with a
+        # junk id3 title becomes title "Title" and part "2"; without the part, samePosition cannot tell
+        # MAM's part-1 row from the part-2 one (neither title writes "Book N").
+        check = book
+        if (parsed.get("part") or parsed.get("series")) and not any(_num(s.part) for s in book.series):
+            check = copy.copy(book)
+            check.series = list(book.series) + [Series(parsed.get("series") or "", parsed.get("part") or "")]
         title = _clip(book.title)
         # a title that only repeats the release name is junk, unless the release name is just the title
         junk = myx_names.isJunkTitle(title) or (myx_names.isJunkTitle(title, parsed.get("source") or self.name) and
@@ -1366,7 +1379,7 @@ class MAMBook:
         # need not reach stdout
         passed = [abook for abook, types in rows.values()
                   if ext and ext in types and sameMamTitle(title, abook.title, [x.name for x in abook.series])
-                  and samePosition(book, abook) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)]
+                  and samePosition(check, abook) and myx_utilities.isThisMyAuthorsBook(book.authors, abook, cfg)]
         if len(passed) == 1:
             print(f"No snatched MAM match; using the only unsnatched one that passes the checks: "
                   f"{_oneLine(passed[0].title)} by {_oneLine(passed[0].getAuthors())}")
