@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- `mam/accept_unsnatched`: a MAM-only subtitle that merely *contains* the row's series name is no longer
+  treated as that series name (`token_set_ratio` was 100 for a subset). *Dune* was accepted against
+  *Dune: Children of Dune* / *Dune: Dune Messiah* (series Dune); the audio of book 1 could be filed as a
+  later cycle volume when that sequel was the only row that also passed the author and file-type checks.
+  The subtitle must now *be* the series name (`token_sort_ratio`, same bar as the main title).
+  *Leviathan Wakes: The Expanse, Book 1* in series The Expanse still matches.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added

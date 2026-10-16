@@ -273,6 +273,17 @@ class GateTest(Base):
                                 row(2, "Cradle: Soulsmith", authors=("Will Wight",))], mb=mb)
         self.assertIsNone(best)
 
+    def test_a_sequel_whose_subtitle_contains_the_series_name_is_not_accepted(self):
+        # MAM title+author+filename search for "Dune.m4b" also returns later cycle books; token_set used to
+        # treat "Children of Dune" as series "Dune". The own torrent is listed Last, First (fails the author
+        # check), so the sequel was the only passing row and Dune was filed as book 3.
+        mb = release(title="Dune", authors=("Frank Herbert",), name="Frank Herbert - Dune", file="Dune.m4b")
+        best, out, _ = self.best([row(1, "Dune", authors=("Herbert, Frank",)),
+                                  row(2, "Dune: Children of Dune", authors=("Frank Herbert",),
+                                      series='{"1": ["Dune", "3"]}')], mb=mb)
+        self.assertIsNone(best)
+        self.assertIn("no unsnatched one passes the title, author and file type check", out)
+
     def test_a_mam_only_subtitle_must_be_the_rows_own_series(self):
         rows = [row(1, "Leviathan Wakes: The Expanse, Book 1", authors=("James S. A. Corey",),
                     series='{"9": ["The Expanse", "1"]}')]
@@ -343,10 +354,14 @@ class GateTest(Base):
                              ("Red Rising", "Red Rising [Graphic Audio]"), ("The Hobbit", "The Hobbit (Dramatised)"),
                              ("Dune (Abridged)", "Dune")]:
             self.assertFalse(same(ours, theirs), (ours, theirs))
-        # a subtitle only MAM has passes only when it is the candidate's own series
+        # a subtitle only MAM has passes only when it *is* the candidate's own series, not when it merely
+        # contains that name (token_set used to accept "Dune: Children of Dune" against series Dune)
         self.assertTrue(same("Leviathan Wakes", "Leviathan Wakes: The Expanse, Book 1", ["The Expanse"]))
         self.assertFalse(same("Leviathan Wakes", "Leviathan Wakes: The Expanse, Book 1"))
         self.assertFalse(same("Mistborn", "Mistborn: Secret History", ["Mistborn"]))
+        self.assertFalse(same("Dune", "Dune: Children of Dune", ["Dune"]))
+        self.assertFalse(same("Dune", "Dune: Dune Messiah", ["Dune"]))
+        self.assertFalse(same("Foundation", "Foundation: Foundation and Empire", ["Foundation"]))
         for ours, theirs in [("Shogun", "Shōgun"), ("Ender’s Game", "Ender's Game"),
                              ("Across the Fence: Expanded Edition: The Secret War in Vietnam (Unabridged)",
                               "Across the Fence: Expanded Edition - The Secret War in Vietnam"),
