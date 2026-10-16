@@ -90,7 +90,8 @@ def sameMamTitle(ours, theirs, series=()):
     must agree too ("Cradle: Unsouled" is not "Cradle: Soulsmith"); a subtitle only we have is refused ("Thrawn:
     Treason" is not "Thrawn"); one only MAM has is accepted only when it is the name of the candidate's own series
     (`series`, from MAM's series_info) and names no bundle or part: "Leviathan Wakes: The Expanse, Book 1" in series
-    The Expanse yes; "Dune: The Complete Saga", "Dune: Part One", "Mistborn: Secret History" no."""
+    The Expanse yes; "Dune: The Complete Saga", "Dune: Part One", "Mistborn: Secret History" no. token_sort, not
+    token_set: "Dune: Children of Dune" contains the series name "Dune" but is the sequel, not this book."""
     om, osub, _ = _titleParts(ours)
     tm, tsub, traw = _titleParts(theirs)
     if not om or not tm or fuzz.token_sort_ratio(om, tm) < MAM_TITLE_MIN:
@@ -113,7 +114,9 @@ def sameMamTitle(ours, theirs, series=()):
     if not tsub:
         return True
     names = [_titleWords(_clip(n)) for n in series or ()]
-    return any(n and fuzz.token_set_ratio(n, tsub) >= MAM_TITLE_MIN for n in names)
+    # token_sort (same bar as the main title): token_set is 100 when the series name is only a subset of
+    # the subtitle, so "Dune: Children of Dune" / "Dune: Dune Messiah" in series Dune used to pass
+    return any(n and fuzz.token_sort_ratio(n, tsub) >= MAM_TITLE_MIN for n in names)
 
 
 def _num(part):
