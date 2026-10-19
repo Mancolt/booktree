@@ -36,12 +36,15 @@ DISC_FOLDER = re.compile(r"^(cd|disc|disk|part)\s*\d+$", re.IGNORECASE)
 FORMAT_FOLDER = re.compile(r"^(mp3|m4b|m4a|flac|ogg|opus|aac|wma|mp4)$", re.IGNORECASE)
 # torrent quality folders that sit under (or instead of) a codec folder: Title/64k/, Title/MP3/128kbps/
 BITRATE_FOLDER = re.compile(r"^\d{2,3}\s?k(?:bps)?$", re.IGNORECASE)
+# mixed-torrent content folder: Title/Audio/book.m4b next to Title/eBook/book.epub. Not "Audiobook"
+# (that word is a different layout) and not a title that merely contains "audio".
+AUDIO_FOLDER = re.compile(r"^audio$", re.IGNORECASE)
 
 
 def isWrapperFolder(name):
-    """Codec or bitrate folder that is never the release (`MP3/`, `64k/`, `128 kbps/`)."""
+    """Codec, bitrate or mixed-torrent Audio folder that is never the release (`MP3/`, `64k/`, `Audio/`)."""
     name = (name or "").strip()
-    return bool(FORMAT_FOLDER.match(name) or BITRATE_FOLDER.match(name))
+    return bool(FORMAT_FOLDER.match(name) or BITRATE_FOLDER.match(name) or AUDIO_FOLDER.match(name))
 
 
 # series parts run 1..99 (with an optional .5); "Fahrenheit 451" / "Apollo 13"-style titles are not series
@@ -278,10 +281,11 @@ def parseReleaseName(name, known_authors=(), file_name=None):
 
 def groupingName(fullPath, sourcePath, fallback):
     """The folder that identifies a book: the release under `sourcePath`, walking past cd/disc/disk/part N
-    parents, codec folders (`MP3/`, `M4B/`, `cd1/MP3/`) and bitrate folders (`64k/`, `MP3/128kbps/`).
-    Two discs of one release become one book; two releases that both use `cd1/`, `MP3/` or `64k/` stay
-    separate. Author/Title layouts still key on the immediate (non-wrapper) parent. Falls back to
-    `fallback` for a loose file or a path outside the source."""
+    parents, codec folders (`MP3/`, `M4B/`, `cd1/MP3/`), bitrate folders (`64k/`, `MP3/128kbps/`) and
+    mixed-torrent Audio folders (`Audio/`). Two discs of one release become one book; two releases
+    that both use `cd1/`, `MP3/`, `64k/` or `Audio/` stay separate. Author/Title layouts still key on
+    the immediate (non-wrapper) parent. Falls back to `fallback` for a loose file or a path outside
+    the source."""
     try:
         rel = os.path.relpath(fullPath, sourcePath) if sourcePath and fullPath else ""
     except ValueError:
@@ -293,7 +297,8 @@ def groupingName(fullPath, sourcePath, fallback):
         return fallback
     for i in range(len(parts) - 2, -1, -1):
         name = parts[i].strip()
-        # cd1/ itself, and a codec/bitrate folder (Title/MP3/, Title/64k/, cd1/MP3/64k/), are not the release
+        # cd1/ itself, and a codec/bitrate/Audio folder (Title/MP3/, Title/64k/, Title/Audio/,
+        # cd1/MP3/64k/), are not the release
         if DISC_FOLDER.match(name) or isWrapperFolder(name):
             continue
         return parts[i]
@@ -301,11 +306,11 @@ def groupingName(fullPath, sourcePath, fallback):
 
 
 def discFolderFromPath(file_path):
-    """The disc folder a media file sits in, walking past codec/bitrate wrappers.
+    """The disc folder a media file sits in, walking past codec/bitrate/Audio wrappers.
 
     `Title/cd1/MP3/64k/01.mp3` and `Title/cd2/MP3/64k/01.mp3` must return distinct discs (`cd1`, `cd2`);
-    otherwise both target the same flat folder and the second is skipped. A codec or bitrate folder
-    that is not under a disc (`Title/MP3/`, `Title/64k/`) is not a disc."""
+    otherwise both target the same flat folder and the second is skipped. A codec, bitrate or Audio
+    folder that is not under a numbered disc (`Title/MP3/`, `Title/64k/`, `Title/Audio/`) is not a disc."""
     parts = [p for p in os.path.normpath(file_path or "").split(os.sep) if p and p != "."]
     for name in reversed(parts[:-1]):
         if isWrapperFolder(name):
