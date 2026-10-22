@@ -830,7 +830,8 @@ class MAMBook:
     def _rankAudible(self, books, book, keys, cfg, hintCandidates=False, requireTitle=False, runtimeAlone=False):
         """Upstream's interactive / best-match selection over Audible products. Sets audibleMatches and
         bestAudibleMatch. requireTitle: a result must match the title (an author match alone is not enough),
-        used when the title or authors came from the parsed release name rather than from tags."""
+        used when the title or authors came from the parsed release name, or when the file's own tags
+        already have a usable title (a catalog hit for another book by that author used to pass)."""
         minMatchRate = int(cfg.get("Config/matchrate"))
         verbose = bool(cfg.get("Config/flags/verbose"))
         add_narrators = bool(cfg.get("Config/flags/add_narrators"))
@@ -1012,7 +1013,11 @@ class MAMBook:
                 soloBook.authors = []
                 attempts.append(("title-only", soloBook, "", True))
         #upstream's search, exactly as before; its getAltTitle step runs when this attempt is reached (see caller)
-        attempts.append(("legacy", book, searchAsin, False))
+        #a usable id3 title must still match: the author-only gate plus matchrate 60 accepts another book
+        #by the same author (The Guest by Patterson files Along Came a Spider at token_sort 71). Junk or
+        #empty titles keep the author-only gate so untagged files still match as upstream did.
+        legacyRequireTitle = book is not None and not myx_names.isJunkTitle(book.title)
+        attempts.append(("legacy", book, searchAsin, legacyRequireTitle))
         #drop attempts that would repeat an identical query with a stricter gate (e.g. title-only then legacy when
         #the tag title is good and the artist tag empty): same result set, cannot succeed where the earlier one failed
         seen = set(); unique = []

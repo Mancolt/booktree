@@ -576,6 +576,33 @@ class ParsedNameSafetyTest(unittest.TestCase):
         self.assertEqual(best.title, "Takedown")
         self.assertIn("Using parsed release name for authors", out)
 
+    def test_usable_id3_tags_reject_a_different_book_by_the_same_author(self):
+        # good title AND artist: the only attempt is upstream's, which used to skip the title gate
+        # (requireTitle False). Audible returning another Patterson title filed The Guest as
+        # Along Came a Spider (token_sort 71 >= matchrate 60, duration difference 0).
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[product("B0WRONG001", "Along Came a Spider", ["James Patterson"], 400)])
+            mb = mambook("The Guest", id3_book("The Guest", ["James Patterson"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertIsNone(best)
+        self.assertIn("This book doesn't have a matching title or author", out)
+        self.assertEqual(len(client.calls), 1)
+        self.assertNotIn("Using parsed release name", out)
+
+    def test_usable_id3_tags_still_accept_the_matching_title(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = FakeConfig(td)
+            client = FakeAudible(search=[
+                product("B0WRONG001", "Along Came a Spider", ["James Patterson"], 400),
+                product("B0RIGHT000", "The Guest", ["James Patterson"], 400),
+            ])
+            mb = mambook("The Guest", id3_book("The Guest", ["James Patterson"], 400 * 60))
+            best, out = run(mb, client, cfg)
+        self.assertEqual(best.asin, "B0RIGHT000")
+        self.assertEqual(best.title, "The Guest")
+        self.assertIn("This book doesn't have a matching title or author", out)
+
 
 def _mam_book(title, authors, snatched=True):
     b = myx_classes.Book(title=title)
