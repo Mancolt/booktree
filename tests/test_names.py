@@ -137,6 +137,29 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/The Guest/MP3/64k/d1.mp3", src, "64k"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/MP3/64k/d1.mp3", src, "64k"), "Along Came a Spider")
         self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/MP3/64k/d1.mp3", src, "64k"), "The Guest")
+        # an ebook kind/format folder is not the release (two mixed torrents that both use eBook/ or EPUB/)
+        self.assertEqual(N.groupingName(f"{src}/The Guest/eBook/book.epub", src, "eBook"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/eBook/book.epub", src, "eBook"),
+                         "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/ebooks/book.epub", src, "ebooks"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/e-book/book.epub", src, "e-book"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/EPUB/book.epub", src, "EPUB"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/EPUB/book.epub", src, "EPUB"),
+                         "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/PDF/book.pdf", src, "PDF"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/MOBI/book.mobi", src, "MOBI"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/AZW3/book.azw3", src, "AZW3"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/eBook/EPUB/book.epub", src, "EPUB"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/eBook/d1.epub", src, "eBook"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd2/eBook/d2.epub", src, "eBook"), "The Guest")
+        # a title that merely contains those letters is not a wrapper (`^ebooks?$` is not "The eBook")
+        self.assertFalse(N.isWrapperFolder("The eBook"))
+        self.assertFalse(N.isWrapperFolder("Book"))
+        self.assertFalse(N.isWrapperFolder("Books"))
+        self.assertTrue(N.isWrapperFolder("eBook"))
+        self.assertTrue(N.isWrapperFolder("EPUB"))
+        self.assertEqual(N.groupingName(f"{src}/The eBook/book.epub", src, "The eBook"), "The eBook")
+        self.assertEqual(N.groupingName(f"{src}/Patterson/The eBook/book.epub", src, "The eBook"), "The eBook")
         # a title folder under cd1/ is the release, not the ancestor above the disc
         self.assertEqual(
             N.groupingName(f"{src}/Patterson/cd1/Along Came a Spider/a.m4b", src, "Along Came a Spider"),
@@ -273,6 +296,20 @@ class BookGroupingKeyTest(unittest.TestCase):
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/MP3/64k/d2.mp3")), "The Guest")
         self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/128 kbps/book.mp3")), "The Guest")
 
+    def test_two_releases_with_ebook_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/eBook/book.epub")
+        spider = self._bf("Along Came a Spider/eBook/book.epub")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/ebooks/book.epub")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/EPUB/book.epub")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/eBook/EPUB/book.epub")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd1/eBook/d1.epub")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/eBook/d2.epub")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/PDF/book.pdf")), "The Guest")
+
     def test_normal_and_author_title_layouts_and_multibook_are_unchanged(self):
         import booktree
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/book.m4b")), "The Guest")
@@ -392,6 +429,28 @@ class DiscFolderTest(unittest.TestCase):
         bf = myx_classes.BookFile("Title/64k/01.mp3", "/dl/Title/64k/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
         bf = myx_classes.BookFile("Title/MP3/64k/01.mp3", "/dl/Title/MP3/64k/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+
+    def test_ebook_folder_under_a_disc_uses_the_disc_not_ebook(self):
+        # grouping walks past cd1/eBook/; filing must too or both discs target Author/Title/01.epub
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Title")
+        book.authors = [myx_classes.Contributor("Author")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for disc in ("cd1/eBook", "cd2/eBook", "Disc 1/EPUB"):
+            bf = myx_classes.BookFile(f"Title/{disc}/01.epub", f"/dl/Title/{disc}/01.epub", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(targets, {
+            "/lib/Author/Title/Title cd1",
+            "/lib/Author/Title/Title cd2",
+            "/lib/Author/Title/Title Disc 1",
+        })
+        # Title/eBook/ and Title/EPUB/ are wrappers, not discs: no extra subfolder
+        bf = myx_classes.BookFile("Title/eBook/01.epub", "/dl/Title/eBook/01.epub", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+        bf = myx_classes.BookFile("Title/EPUB/01.epub", "/dl/Title/EPUB/01.epub", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
 
 
