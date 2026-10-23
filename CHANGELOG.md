@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two mixed torrents that both use an ebook folder (`Title/eBook/`, typically next to `Title/Audiobook/`,
+  or a format folder `Title/EPUB/` / `PDF/` / `MOBI/` / `AZW3/`) were grouped as one book named `eBook`
+  and hardlinked to the first match. Grouping now walks past those folders the same way it already walks
+  past `cd1/`, `MP3/` and `64k/`. `cd1/eBook/` and `cd2/eBook/` also get distinct disc subfolders; they
+  used to collide in a flat `Author/Title/` folder and the second disc was skipped. A title that merely
+  contains those letters (`The eBook`, `Book`) is not treated as a wrapper.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added
