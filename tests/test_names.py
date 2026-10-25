@@ -137,6 +137,23 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/The Guest/MP3/64k/d1.mp3", src, "64k"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/MP3/64k/d1.mp3", src, "64k"), "Along Came a Spider")
         self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/MP3/64k/d1.mp3", src, "64k"), "The Guest")
+        # a payload folder is not the release (two books that both use Files/ or MP3/Files/)
+        self.assertEqual(N.groupingName(f"{src}/The Guest/Files/d1.mp3", src, "Files"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/Files/d1.mp3", src, "Files"),
+                         "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/File/book.m4b", src, "File"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/MP3/Files/d1.mp3", src, "Files"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/MP3/Files/d1.mp3", src, "Files"),
+                         "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/Files/d1.mp3", src, "Files"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd2/Files/d2.mp3", src, "Files"), "The Guest")
+        # a title that merely contains those letters is not a wrapper (`^files?$` is not "The Files")
+        self.assertFalse(N.isWrapperFolder("The Files"))
+        self.assertFalse(N.isWrapperFolder("Profiles"))
+        self.assertTrue(N.isWrapperFolder("Files"))
+        self.assertTrue(N.isWrapperFolder("FILE"))
+        self.assertEqual(N.groupingName(f"{src}/The Files/book.m4b", src, "The Files"), "The Files")
+        self.assertEqual(N.groupingName(f"{src}/Patterson/The Files/book.m4b", src, "The Files"), "The Files")
         # a title folder under cd1/ is the release, not the ancestor above the disc
         self.assertEqual(
             N.groupingName(f"{src}/Patterson/cd1/Along Came a Spider/a.m4b", src, "Along Came a Spider"),
@@ -273,6 +290,19 @@ class BookGroupingKeyTest(unittest.TestCase):
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/MP3/64k/d2.mp3")), "The Guest")
         self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/128 kbps/book.mp3")), "The Guest")
 
+    def test_two_releases_with_files_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/Files/d1.mp3")
+        spider = self._bf("Along Came a Spider/Files/d1.mp3")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/File/book.m4b")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/MP3/Files/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd1/Files/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/Files/d2.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/Files/book.m4b")), "The Guest")
+
     def test_normal_and_author_title_layouts_and_multibook_are_unchanged(self):
         import booktree
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/book.m4b")), "The Guest")
@@ -392,6 +422,28 @@ class DiscFolderTest(unittest.TestCase):
         bf = myx_classes.BookFile("Title/64k/01.mp3", "/dl/Title/64k/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
         bf = myx_classes.BookFile("Title/MP3/64k/01.mp3", "/dl/Title/MP3/64k/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+
+    def test_files_folder_under_a_disc_uses_the_disc_not_files(self):
+        # grouping walks past cd1/Files/; filing must too or both discs target Author/Title/01.mp3
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Title")
+        book.authors = [myx_classes.Contributor("Author")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for disc in ("cd1/Files", "cd2/Files", "Disc 1/File"):
+            bf = myx_classes.BookFile(f"Title/{disc}/01.mp3", f"/dl/Title/{disc}/01.mp3", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(targets, {
+            "/lib/Author/Title/Title cd1",
+            "/lib/Author/Title/Title cd2",
+            "/lib/Author/Title/Title Disc 1",
+        })
+        # Title/Files/ is a payload folder, not a disc: no extra subfolder
+        bf = myx_classes.BookFile("Title/Files/01.mp3", "/dl/Title/Files/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+        bf = myx_classes.BookFile("Title/MP3/Files/01.mp3", "/dl/Title/MP3/Files/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
 
 

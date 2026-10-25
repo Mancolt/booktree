@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a payload folder (`Title/Files/`, `Title/MP3/Files/`) were grouped as one
+  book named `Files` and hardlinked to the first match. Grouping now walks past `Files/` (and `File/`)
+  the same way it already walks past `cd1/`, `MP3/` and `64k/`. `cd1/Files/` and `cd2/Files/` also get
+  distinct disc subfolders; they used to collide in a flat `Author/Title/` folder and the second disc
+  was skipped. A title that merely contains those letters (`The Files`, `Profiles`) is not treated as
+  a wrapper.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added
