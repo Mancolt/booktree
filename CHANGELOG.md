@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a content folder (`Title/Tracks/`, `Title/Chapters/`, `Title/MP3/Tracks/`)
+  were grouped as one book named `Tracks` or `Chapters` and hardlinked to the first match. Grouping now
+  walks past `Tracks/` (and `Track/`) and `Chapters/` (and `Chapter/`) the same way it already walks past
+  `cd1/`, `MP3/` and `64k/`. `cd1/Tracks/` and `cd2/Tracks/` also get distinct disc subfolders; they used
+  to collide in a flat `Author/Title/` folder and the second disc was skipped. A title that merely
+  contains those letters (`Side Tracks`, `The Lost Chapters`) is not treated as a wrapper.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added
