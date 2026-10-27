@@ -11,3 +11,13 @@ config/*
 private.txt
 *.pkl
 mousearr.py
+# not part of the runtime: repository metadata (CI's checkout keeps the job token in .git/config), tooling, and
+# the gitignored site notes
+.git
+.github
+.claude
+.cursor
+docs/site
+*handoff*
+**/__pycache__
+.ruff_cache

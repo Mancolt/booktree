@@ -9,3 +9,7 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    # 3.23 ships ffmpeg 8 (ffprobe reads the tags and durations); move deliberately, then drop this
+    ignore:
+      - dependency-name: alpine
+        versions: [">=3.23"]

@@ -4,6 +4,24 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## 3.0.8 - 2026-10-27
+
+### Changed
+- Image base moved from Alpine 3.21 to 3.22. Alpine ends security support for 3.21 on 2026-11-01; after that a
+  rebuild on 3.21 would pick up no more fixes for the system packages. 3.22 (supported until 2027-05-01) ships the
+  same Python (3.12) and ffmpeg (6.1) as 3.21, so no code changes. Alpine 3.23 was not chosen: its ffmpeg 8
+  would change `ffprobe`, which reads the audio files' tags and duration, and the offline replay does not
+  exercise that. The new base also brings OpenSSL 3.5 (was 3.3) and SQLite 3.49 (was 3.48); TLS to Audible,
+  MAM and ntfy was checked from the new image. `ffprobe` output on m4b, m4a and mp3 files is byte-identical.
+  Replay over the historical corpus, 3.0.7 image vs this one with the same code: no differences.
+
+### Security
+- The image no longer contains the build's `.git` directory (or `.github`, `.claude`, `.cursor`). In images up to
+  3.0.7 its `config` held the CI job's `GITHUB_TOKEN` as an HTTP header, because `actions/checkout` keeps the
+  token there and the Dockerfile copies the whole build context. That token expires when the job ends, so the
+  copies in published images no longer grant access. CI's image job now checks out without persisting
+  credentials, and `.dockerignore` excludes those directories.
+
 ## 3.0.7 - 2026-10-27
 
 ### Added
