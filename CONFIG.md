@@ -206,8 +206,10 @@ Audible has no product for the ASIN.
   names someone and none of the Audible product's narrators appears in it. The comparison is by surname, ignores
   order, initials, accents and suffixes (`Ganser, L.J.` agrees with `L. J. Ganser`), strips a credit prefix
   (`Read By:`), and treats a missing tag, a placeholder (`Unknown`, `Full Cast`, `Virtual Voice`) or a publisher
-  name (`Penguin Audio`, `HarperAudio`, `... Publishing`) as no evidence, so it never refuses on those. Different
-  narrators usually mean a different recording of the same title under another ASIN.
+  name (`Penguin Audio`, `HarperAudio`, `... Publishing`) as no evidence, so it never refuses on those. The same
+  goes for the book's author in the narrator tag (a common MP3 convention), unless the author also narrates the
+  product, and for a product whose narrator names cannot be compared (initials only, or a script with no Latin
+  letters). Different narrators usually mean a different recording of the same title under another ASIN.
 
 stdout for a refusal (indented lines name the product, the last line the outcome):
 

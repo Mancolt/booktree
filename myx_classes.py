@@ -745,7 +745,7 @@ class MAMBook:
             if narratorVeto:
                 #the file's own tags, not `book`: in mam-audible mode `book` is the MAM row (or None)
                 tagged = self.ffprobeBook.narrators if self.ffprobeBook is not None else []
-                if myx_names.narratorsDisagree(tagged, abook.narrators):
+                if myx_names.narratorsDisagree(tagged, abook.narrators, abook.authors):
                     print(f"\tRefusing pinned ASIN {abook.asin}: tagged narrator(s) {', '.join(myx_names.narratorNames(tagged))} "
                           f"not among the product's {', '.join(myx_names.narratorNames(abook.narrators))}")
                     refused.append("narrator")

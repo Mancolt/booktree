@@ -137,6 +137,24 @@ class NarratorsDisagreeTest(unittest.TestCase):
         self.assertFalse(myx_names.narratorsDisagree(["George Guidall"], []))
         self.assertFalse(myx_names.narratorsDisagree(["George Guidall"], ["Full Cast"]))
 
+    def test_uncomparable_product_names_are_no_evidence(self):
+        # initials only, or a script that leaves no Latin letters: nothing to compare, so never a refusal
+        self.assertFalse(myx_names.narratorsDisagree(["George Guidall"], ["J."]))
+        self.assertFalse(myx_names.narratorsDisagree(["George Guidall"], ["村上春樹"]))
+        self.assertFalse(myx_names.narratorsDisagree(["George Guidall"], ["J.", "村上春樹"]))
+        # one comparable name is enough to decide
+        self.assertTrue(myx_names.narratorsDisagree(["George Guidall"], ["J.", "Simon Vance"]))
+
+    def test_author_in_the_narrator_tag_is_no_evidence(self):
+        self.assertFalse(myx_names.narratorsDisagree(["Freida McFadden"], ["Alyson Krawchuk"], authors=["Freida McFadden"]))
+        self.assertFalse(myx_names.narratorsDisagree(["McFadden, Freida"], ["Alyson Krawchuk"],
+                                                     authors=[myx_classes.Contributor("Freida McFadden")]))
+        # an author who narrates their own book still agrees
+        self.assertFalse(myx_names.narratorsDisagree(["Brian Page"], ["Brian Page"], authors=["Brian Page"]))
+        # the author plus a different narrator in the tag: the narrator still decides
+        self.assertTrue(myx_names.narratorsDisagree(["Freida McFadden", "George Guidall"], ["Alyson Krawchuk"],
+                                                    authors=["Freida McFadden"]))
+
 
 class NarratorVetoTest(unittest.TestCase):
     def _run(self, tagged, product_narrators, veto=1, book=None, search=None):
@@ -167,6 +185,12 @@ class NarratorVetoTest(unittest.TestCase):
             best, out = self._run(tagged, ["Alyson Krawchuk"])
             self.assertEqual(best.asin, PIN, tagged)
             self.assertIn(f"Pinned ASIN {PIN} accepted", out)
+
+    def test_author_tagged_as_narrator_is_accepted(self):
+        # pinned_product's author is Freida McFadden; the file credits her in the narrator (composer) tag
+        best, out = self._run(["Freida McFadden"], ["Alyson Krawchuk"])
+        self.assertEqual(best.asin, PIN)
+        self.assertNotIn("Refusing", out)
 
     def test_uses_the_files_tags_not_the_metadata_book(self):
         # mam-audible passes the MAM row (or None) as `book`; its narrators are not the file's

@@ -130,19 +130,26 @@ def _surname(name):
     return tokens[-1] if tokens else ""
 
 
-def narratorsDisagree(tagged, product):
+def narratorsDisagree(tagged, product, authors=()):
     """True only when both sides name a narrator and no surname of the product's narrators appears in the tagged
-    narrators. A missing or junk tag on either side is no evidence (False). Order, initials and accents do not
-    matter ("Ganser, L.J." agrees with "L. J. Ganser"); a surname glued to trailing text in a sloppy tag
-    ("Brad Thorafterword") still counts when it is 4+ letters."""
+    narrators. A missing or junk tag on either side is no evidence (False), and so is a product whose narrator names
+    cannot be compared at all (initials only, or a script that has no Latin transliteration here). Order, initials and
+    accents do not matter ("Ganser, L.J." agrees with "L. J. Ganser"); a surname glued to trailing text in a sloppy tag
+    ("Brad Thorafterword") still counts when it is 4+ letters. `authors`: the product's authors. A tagged name that is
+    one of them (MP3s often carry the author in the narrator tag) is no evidence either, unless that author also
+    narrates the product."""
     mine, theirs = narratorNames(tagged), narratorNames(product)
-    if not mine or not theirs:
+    surnames = [s for s in (_surname(n) for n in theirs) if len(s) >= 2]
+    if not mine or not surnames:
+        return False
+    author_surnames = {s for s in (_surname(a if isinstance(a, str) else getattr(a, "name", "")) for a in authors or []) if len(s) >= 2}
+    #a tagged name is the author when it carries an author's surname as a word ("Freida McFadden", "McFadden, Freida");
+    #at worst a narrator who shares the author's surname counts as no evidence, which can only prevent a refusal
+    mine = [n for n in mine if not (author_surnames & set(_nameTokens(n))) or set(_nameTokens(n)) & set(surnames)]
+    if not mine:
         return False
     tokens = set(_nameTokens(" ".join(mine)))
-    for name in theirs:
-        s = _surname(name)
-        if len(s) < 2:
-            continue
+    for s in surnames:
         if s in tokens or (len(s) >= 4 and any(t.startswith(s) for t in tokens)):
             return False
     return True
