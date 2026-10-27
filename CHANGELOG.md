@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## 3.0.9 - 2026-10-27
+
+### Fixed
+- `pin_narrator_veto` refused a pin on no evidence when none of the product's narrator names could be compared
+  (initials only, or a script that leaves no Latin letters): with nothing to compare it now never refuses.
+- `pin_narrator_veto` refused a pin when the files' narrator tag held the book's author (a common MP3 convention) and
+  someone else narrates the product. A tagged name that carries one of the product's authors' surnames is now no
+  evidence, unless that author also narrates the product. On this fork's run history (124 matched books with
+  narrators on both sides) the check still flags exactly the same four different recordings/books and nothing else.
+
 ## 3.0.8 - 2026-10-27
 
 ### Changed
