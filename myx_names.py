@@ -15,6 +15,7 @@ The result is a best effort with a confidence flag; the caller decides whether t
 """
 import os
 import re
+import unicodedata
 from thefuzz import fuzz
 
 AUDIO_EXT = re.compile(r"\.(m4b|mp3|m4a|flac|ogg|opus|aac|wma)$", re.IGNORECASE)
@@ -93,6 +94,58 @@ def authorsOverlap(names_a, names_b, threshold=85):
             if score >= threshold:
                 return True
     return False
+
+
+# narrator tags: a credit prefix is stripped; placeholders, "full cast" and publisher/label names ("Penguin Audio",
+# "HarperAudio", "Blackstone Publishing") name nobody and are not evidence about the recording
+NARRATOR_PREFIX = re.compile(r"^(?:(?:read|narrated|performed)\s+by|narrators?)\s*[:\-]?\s*", re.IGNORECASE)
+JUNK_NARRATOR = re.compile(r"^(?:unknown(?: (?:artist|narrator|reader))?|various(?: (?:artists|narrators|readers))?|narrator|reader|"
+                           r"(?:a )?full cast|uncredited|anonymous|virtual voice|n/?a|none|\d*)$", re.IGNORECASE)
+LABEL_NARRATOR = re.compile(r"(?:\baudio(?:books?)?|\bpublish(?:ing|ers?)|\bpress|\bproductions?|\bstudios?|\bmedia|\brecords|"
+                            r"\binc|\bllc|\bltd)\.?$", re.IGNORECASE)
+CAMEL_LABEL = re.compile(r"[a-z]Audio(?:books?)?$")             # "HarperAudio", "BrillianceAudio"; not "Claudio"
+NAME_SUFFIX = {"jr", "sr", "ii", "iii", "iv", "phd", "md"}
+
+
+def narratorNames(names):
+    """Usable narrator names from a tag or an Audible product (str or objects with .name): the credit prefix
+    ("Read By: ") stripped, placeholders and publisher/label names dropped."""
+    out = []
+    for n in names or []:
+        n = n if isinstance(n, str) else getattr(n, "name", "")
+        n = NARRATOR_PREFIX.sub("", str(n or "")[:MAX_NAME_LEN].strip()).strip(" ,;:-")
+        if not n or JUNK_NARRATOR.match(n) or LABEL_NARRATOR.search(n) or CAMEL_LABEL.search(n):
+            continue
+        out.append(n)
+    return out
+
+
+def _nameTokens(text):
+    t = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode().lower()
+    return re.findall(r"[a-z0-9]+", t)
+
+
+def _surname(name):
+    tokens = [t for t in _nameTokens(name) if t not in NAME_SUFFIX]
+    return tokens[-1] if tokens else ""
+
+
+def narratorsDisagree(tagged, product):
+    """True only when both sides name a narrator and no surname of the product's narrators appears in the tagged
+    narrators. A missing or junk tag on either side is no evidence (False). Order, initials and accents do not
+    matter ("Ganser, L.J." agrees with "L. J. Ganser"); a surname glued to trailing text in a sloppy tag
+    ("Brad Thorafterword") still counts when it is 4+ letters."""
+    mine, theirs = narratorNames(tagged), narratorNames(product)
+    if not mine or not theirs:
+        return False
+    tokens = set(_nameTokens(" ".join(mine)))
+    for name in theirs:
+        s = _surname(name)
+        if len(s) < 2:
+            continue
+        if s in tokens or (len(s) >= 4 and any(t.startswith(s) for t in tokens)):
+            return False
+    return True
 
 
 def nameLikeness(segment):

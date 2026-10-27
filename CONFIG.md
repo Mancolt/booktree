@@ -57,7 +57,9 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | mousehole_state_file | | Path of a [mousehole](https://github.com/t-mart/mousehole) `state.json`; when set (or `MOUSEHOLE_STATE_FILE` is set), the cookie is read from it on every run. See [MAM session](#mam-session-where-the-cookie-comes-from). |    |
 | hints_file  |         | Path of a hints file (see below); same as `--hints` |    |
 | flags/parse_names | | Parse the release folder/file name (`Author - Title`, `Title - Author`, `Title by Author`, `Series NN - Title`, `Title [ASIN]`, `(Unabridged)` noise) and use it for the search where the id3 tags are empty or junk (`AudioTrack 01`, `unknown artist`, or a title that just repeats the file name). `--legacy-names` turns it off. | 1 |
-| pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = never refuse) | 0 |
+| pin_max_runtime_delta_min | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this many minutes (0 = off). With `pin_max_runtime_delta_pct` also set, both limits must be exceeded. See [Pin checks](#pin-checks) | 0 |
+| pin_max_runtime_delta_pct | | Refuse a pinned ASIN whose runtime differs from the expected duration by more than this percentage of it (0 = off). With `pin_max_runtime_delta_min` also set, both limits must be exceeded | 0 |
+| pin_narrator_veto | | 1 = refuse a pinned ASIN when the files' narrator tag names someone and none of the Audible product's narrators appears in it. See [Pin checks](#pin-checks) | 0 |
 | cache/audible_positive_hours | | How long a non-empty Audible answer is reused | 720 |
 | cache/audible_empty_hours | | How long an empty Audible answer (or a per-ASIN answer without a title) is reused before the query is retried | 6 |
 | cache/mam_positive_hours | | How long a MAM answer with a snatched entry is reused | 168 |
@@ -138,7 +140,7 @@ sessions are IP/ASN-locked: a cookie created on one network does not work from a
 |---|---|
 | 0 | every configured path was processed (matched or not) |
 | 1 | an unhandled error; the traceback is on stdout/stderr and, with `--json-log`, a final `run` record carries `exit_code` and `error` |
-| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a malformed `--pin`, `--remember` without a hints file, an invalid `notify`/`abs`/`dedupe_roots` setting, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
+| 2 | configuration or input problem: config file missing or unreadable, `paths` not a list of `files`/`source_path`/`media_path` objects or naming a `source_path`/`media_path` that does not exist, a hints file that is missing, unreadable or invalid, a malformed `--pin`, a `pin_max_runtime_delta_min`/`pin_max_runtime_delta_pct` that is not a number >= 0 or a `pin_narrator_veto` other than 0/1, `--remember` without a hints file, an invalid `notify`/`abs`/`dedupe_roots` setting, a `log`-mode input file that does not exist, or no MAM session accepted (including MAM unreachable at start-up) |
 | 130 | interrupted |
 
 ## Hints file (`--hints <json>` or `Config/hints_file`)
@@ -158,7 +160,7 @@ by the full path of any file in it:
 
 | field | meaning |
 |---|---|
-| `asin` | Pinned ASIN. Authoritative: the Audible product is accepted without the title/author check (a runtime mismatch is only warned about). If Audible has no usable product for it, the normal search runs. |
+| `asin` | Pinned ASIN. Authoritative: the Audible product is accepted without the title/author check (a runtime mismatch is only warned about unless the [pin checks](#pin-checks) are on). If Audible has no usable product for it, or a pin check refuses it, the normal search runs. |
 | `candidates` | Up to 10 ASINs, chosen by the caller (no title/author check). Each is fetched by ASIN; among those whose runtime is within 2 minutes of the expected duration the highest fuzzy score wins, then the closest runtime; if none is within 2 minutes, the best fuzzy score above `matchrate`. A candidate with the right runtime is accepted at any score, so only list candidates you would accept. |
 | `duration_min` | Expected runtime in minutes. Defaults to the total duration of the release's files. |
 | `title`, `authors` | Used for the Audible search instead of the id3 title/artist (at most 300 characters, 10 authors). A hinted `title` is used as-is, also with `--fixid3`. The logged `id3-*` columns still show the file's own tags. |
@@ -180,9 +182,44 @@ a multi-file release, and blank the `paths` column when re-pinning a row that wa
 book (otherwise the old target folder is reused).
 
 For a pinned match the `adb-matchRate` column holds the informational fuzzy score of the Audible product against the
-file's own tags, which may be well below `matchrate`; `isMatched` is `True` regardless. `Config/pin_max_runtime_delta_min`
-(default 0 = off) refuses a pin whose runtime differs from the expected duration by more than that many minutes and
-falls back to the normal search.
+file's own tags, which may be well below `matchrate`; `isMatched` is `True` regardless.
+
+An `asin` entry in a hints file given with `--hints` on the command line that matched no release is reported at the
+end of the run (`Warning: --hints entry '...' (ASIN ...) matched no release in this run`), as an unmatched `--pin` is.
+A hints file configured as `Config/hints_file` is a standing list of corrections and is not checked this way.
+
+### Pin checks
+
+A pin is only as good as whoever chose it. When pins come from a script or another tool rather than from you
+looking at the book, two optional checks (all off by default) can refuse a pin that contradicts the files. A
+refused pin is not used: booktree prints why and falls back to the normal search for that release, exactly as when
+Audible has no product for the ASIN.
+
+* **Runtime.** `Config/pin_max_runtime_delta_min` and `Config/pin_max_runtime_delta_pct` compare the Audible
+  runtime with the expected duration (the hint's `duration_min`, else the total duration of the release's files).
+  With one limit set, exceeding it refuses the pin. With both set, a pin is refused only when it exceeds both, so a
+  few minutes cannot refuse a short book and a few percent cannot refuse a long one: `20` and `8` keep an 18-minute
+  difference on a 212-minute book (8.5 %) and a 60-minute difference on a 48-hour book (2 %), and refuse an
+  abridged edition 230 minutes shorter than a 10-hour file. Leave `duration_min` out of a hint when you want the
+  check to compare against the files: with it, the check compares two figures you supplied.
+* **Narrator.** With `Config/pin_narrator_veto: 1`, a pin is refused when the files' narrator tag (`composer`)
+  names someone and none of the Audible product's narrators appears in it. The comparison is by surname, ignores
+  order, initials, accents and suffixes (`Ganser, L.J.` agrees with `L. J. Ganser`), strips a credit prefix
+  (`Read By:`), and treats a missing tag, a placeholder (`Unknown`, `Full Cast`, `Virtual Voice`) or a publisher
+  name (`Penguin Audio`, `HarperAudio`, `... Publishing`) as no evidence, so it never refuses on those. Different
+  narrators usually mean a different recording of the same title under another ASIN.
+
+stdout for a refusal (indented lines name the product, the last line the outcome):
+
+~~~
+	Refusing pinned ASIN B0XXXXXXXX: runtime 492min differs from expected 300min by 192min (64%) (limits 20min and 8%)
+	Refusing pinned ASIN B0XXXXXXXX: tagged narrator(s) George Guidall not among the product's Simon Vance
+Pinned ASIN B0XXXXXXXX refused on runtime, falling back to search
+~~~
+
+The outcome line names every reason that applied (`refused on runtime`, `refused on narrator`,
+`refused on runtime and narrator`); with only `pin_max_runtime_delta_min` set the wording is the same as before
+these options existed.
 
 Duration is evidence in every search: among results that pass the title/author check and the `matchrate`
 threshold, a result whose Audible runtime is within 2 minutes of the expected duration is preferred over one that

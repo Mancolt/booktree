@@ -120,6 +120,7 @@ class Config(object):
 
                 if getattr(params, "hints", None) is not None:
                     cfg["Config"]["hints_file"] = params.hints
+                    cfg["Config"]["hints_from_cli"] = True        # unmatched entries are warned about, like --pin
 
                 if getattr(params, "legacy_names", None):
                     cfg["Config"]["flags"]["parse_names"] = 0

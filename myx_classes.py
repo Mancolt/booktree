@@ -713,12 +713,14 @@ class MAMBook:
         verbose = bool(cfg.get("Config/flags/verbose"))
         fuzzy_match = cfg.get("Config/fuzzy_match")
         maxDelta = float(cfg.get("Config/pin_max_runtime_delta_min", 0) or 0)
+        maxPct = float(cfg.get("Config/pin_max_runtime_delta_pct", 0) or 0)
+        narratorVeto = bool(cfg.get("Config/pin_narrator_veto", 0))
         print(f"Using pinned ASIN {self.pinnedAsin} for {self.name}")
         products = myx_audible.getAudibleBook(client, cfg, asin=self.pinnedAsin, language=language, refresh=self.refresh)
         self.audibleMatches = products or []
         if verbose:
             print(f"Found {len(self.audibleMatches)} Audible match(es)\n\n")
-        refused = False
+        refused = []
         for product in self.audibleMatches:
             abook = myx_audible.product2Book(product)
             if not abook.title:
@@ -729,13 +731,25 @@ class MAMBook:
                 mine = '|'.join([f"Duration:{self.getRunTimeLength()}min", book.getAuthors(), book.getCleanTitle()])
                 theirs = '|'.join([f"Duration:{abook.length}min", abook.getAuthors(), abook.getCleanTitle()])
                 abook.matchRate = myx_utilities.fuzzymatch(mine, theirs)[fuzzy_match]
-            delta = myx_hints.durationDelta(self.getExpectedDuration(), abook.length)
+            expected = self.getExpectedDuration()
+            delta = myx_hints.durationDelta(expected, abook.length)
             if delta is not None and not myx_hints.withinTolerance(delta):
-                if maxDelta > 0 and delta > maxDelta:
-                    print(f"\tRefusing pinned ASIN {abook.asin}: runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min (limit {maxDelta:.0f}min)")
-                    refused = True
+                if myx_hints.runtimeRefused(delta, expected, maxDelta, maxPct):
+                    #the min-only wording is unchanged (scraped by callers); the percentage is added when that limit is on
+                    by = f"{delta:.0f}min" + (f" ({delta / expected * 100:.0f}%)" if maxPct > 0 else "")
+                    limits = [f"{maxDelta:.0f}min"] * (maxDelta > 0) + [f"{maxPct:g}%"] * (maxPct > 0)
+                    print(f"\tRefusing pinned ASIN {abook.asin}: runtime {abook.length}min differs from expected {expected:.0f}min by {by} ({'limit' if len(limits) == 1 else 'limits'} {' and '.join(limits)})")
+                    refused.append("runtime")
                     continue
-                print(f"\tWarning: pinned ASIN runtime {abook.length}min differs from expected {self.getExpectedDuration():.0f}min by {delta:.0f}min")
+                print(f"\tWarning: pinned ASIN runtime {abook.length}min differs from expected {expected:.0f}min by {delta:.0f}min")
+            if narratorVeto:
+                #the file's own tags, not `book`: in mam-audible mode `book` is the MAM row (or None)
+                tagged = self.ffprobeBook.narrators if self.ffprobeBook is not None else []
+                if myx_names.narratorsDisagree(tagged, abook.narrators):
+                    print(f"\tRefusing pinned ASIN {abook.asin}: tagged narrator(s) {', '.join(myx_names.narratorNames(tagged))} "
+                          f"not among the product's {', '.join(myx_names.narratorNames(abook.narrators))}")
+                    refused.append("narrator")
+                    continue
             print(f"Pinned ASIN {abook.asin} accepted: {abook.title} by {abook.getAuthors()}")
             myx_hints.notePinAccepted(self.hintKey, abook.asin)
             self.bestAudibleMatch = abook
@@ -744,7 +758,7 @@ class MAMBook:
         #nothing accepted: do not leave the rejected product behind as a "match" in the log
         self.audibleMatches = []
         if refused:
-            print(f"Pinned ASIN {self.pinnedAsin} refused on runtime, falling back to search")
+            print(f"Pinned ASIN {self.pinnedAsin} refused on {' and '.join(dict.fromkeys(refused))}, falling back to search")
         else:
             print(f"Pinned ASIN {self.pinnedAsin} returned no usable Audible product, falling back to search")
         return None

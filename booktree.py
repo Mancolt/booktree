@@ -591,7 +591,8 @@ def runWithConfig(cfg):
         return usageError("\nConfig/paths must be a non-empty list of objects with files, source_path and media_path. Please check and try again!\n")
 
     #optional integrations: a typo here would silently mute alerts or skip the scan, so it is checked before the run
-    for problem in (myx_notify.validate(cfg), myx_library.validateAbs(cfg), myx_library.validateDedupeRoots(cfg)):
+    for problem in (myx_notify.validate(cfg), myx_library.validateAbs(cfg), myx_library.validateDedupeRoots(cfg),
+                    myx_hints.validatePinLimits(cfg)):
         if problem:
             return usageError(f"\n{problem}\n")
 
