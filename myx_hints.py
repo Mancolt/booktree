@@ -182,6 +182,7 @@ def getHints(cfg):
 
 
 _appliedRefresh = set()
+_usedHints = set()              # hint keys that matched a release this run (any field)
 _acceptedPins = {}              # hint key -> ASIN, for pins whose Audible product was actually accepted this run
 
 
@@ -290,7 +291,8 @@ def rememberPins(cfg):
 
 
 def warnUnusedRefresh(cfg):
-    """After a run: a --refresh or --pin name that matched no release is a typo the operator should hear about."""
+    """After a run: a --refresh or --pin name, or an `asin` entry of a --hints file, that matched no release is a typo
+    (or a release that is not there) the operator should hear about."""
     for name in _names(cfg.get("Config/refresh")):
         if _hintKey(name) not in _appliedRefresh:
             print(f"Warning: --refresh {name!r} matched no release in this run")
@@ -301,6 +303,17 @@ def warnUnusedRefresh(cfg):
     for k in pins:
         if k not in _appliedRefresh:
             print(f"Warning: --pin {k!r} matched no release in this run")
+    #a hints file named on the command line is a per-run instruction like --pin; a configured Config/hints_file is a
+    #standing list of corrections whose releases may be long gone, so only the former is checked
+    if not cfg.get("Config/hints_from_cli"):
+        return
+    try:
+        hints = getHints(cfg)
+    except (HintsError, ValueError, OSError):
+        return
+    for k, hint in hints.items():
+        if hint.get("asin") and k not in pins and k not in _usedHints:
+            print(f"Warning: --hints entry {k!r} (ASIN {hint['asin']}) matched no release in this run")
 
 
 def findHint(hints, name, paths=(), root=None):
@@ -340,6 +353,7 @@ def findHintKey(hints, name, paths=(), root=None):
 
 
 def _found(hints, key):
+    _usedHints.add(key)
     if hints[key].get("refresh"):
         noteRefreshApplied(key)
     return hints[key]
@@ -358,6 +372,41 @@ def durationDelta(expected_min, candidate_min):
 
 def withinTolerance(delta, tolerance=DURATION_TOLERANCE_MIN):
     return delta is not None and delta <= tolerance
+
+
+def validatePinLimits(cfg):
+    """A problem with the pin limits worth stopping for before the run, or None: a typo would otherwise crash the
+    first pinned release mid-run, or silently leave a veto off."""
+    for key in ("pin_max_runtime_delta_min", "pin_max_runtime_delta_pct"):
+        raw = cfg.get(f"Config/{key}", 0)
+        try:
+            value = float(raw or 0)
+        except (TypeError, ValueError):
+            value = None
+        if isinstance(raw, bool) or value is None or not math.isfinite(value) or value < 0:
+            return f"Config/{key} must be a number >= 0 (0 = off), got {raw!r}"
+    veto = cfg.get("Config/pin_narrator_veto", 0)
+    if veto not in (0, 1, True, False, None):
+        return f"Config/pin_narrator_veto must be 0 or 1, got {veto!r}"
+    return None
+
+
+def runtimeRefused(delta, expected_min, max_delta_min=0, max_pct=0):
+    """Whether a pinned product's runtime is refused: only when EVERY configured limit is exceeded (minutes and/or
+    percent of the expected runtime; 0 = that limit is off, both off = never refuse). Requiring both keeps a few
+    minutes from refusing a short book and a few percent from refusing a long one."""
+    if delta is None or (max_delta_min <= 0 and max_pct <= 0):
+        return False
+    if max_delta_min > 0 and delta <= max_delta_min:
+        return False
+    if max_pct > 0:
+        try:
+            e = float(expected_min or 0)
+        except (TypeError, ValueError):
+            return False
+        if e <= 0 or delta / e * 100 <= max_pct:
+            return False
+    return True
 
 
 def pickBest(scored, minMatchRate, requireRate=True, tolerance=DURATION_TOLERANCE_MIN):

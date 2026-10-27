@@ -4,6 +4,33 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## 3.0.7 - 2026-10-27
+
+### Added
+- Pin checks, all off by default (CONFIG.md, Pin checks). A pinned ASIN (`--pin`, a hints file `asin`) was
+  accepted whatever it contradicted, apart from an optional runtime ceiling in minutes. For pins chosen by a script
+  or another tool these refuse a pin that contradicts the files and fall back to the normal search:
+  - `pin_max_runtime_delta_pct`: a runtime limit as a percentage of the expected duration. With
+    `pin_max_runtime_delta_min` also set, a pin is refused only when both limits are exceeded, so neither a short
+    book nor a long one is refused by the wrong yardstick.
+  - `pin_narrator_veto`: refuse a pin when the files' narrator tag names someone and none of the product's
+    narrators appears in it (surname comparison; placeholders such as `Unknown` and publisher names such as
+    `Penguin Audio` count as no tag). On this fork's run history (123 matched books with narrators on both sides)
+    it flags exactly the four that were a different recording or a different book - *Gates of Fire* (George
+    Guidall vs Simon Vance), *The Rise and Fall of the Great Powers*, *Personal*, and a wrong *Free Fall* - and
+    none of the others.
+  Invalid values stop the run before anything is processed (exit 2).
+- An `asin` entry of a hints file given with `--hints` that matched no release is reported at the end of the run,
+  as an unmatched `--pin` already was: `Warning: --hints entry '...' (ASIN ...) matched no release in this run`.
+  A hints file configured as `Config/hints_file` is not checked (its old entries may name long-gone releases).
+
+### Changed
+- A refused pin's outcome line names the reason: `Pinned ASIN ... refused on narrator, falling back to search`
+  (or `on runtime and narrator`). With only `pin_max_runtime_delta_min` set, every line is unchanged; the
+  `Refusing pinned ASIN ...` line gains the percentage only when `pin_max_runtime_delta_pct` is set.
+
+Replay over the historical corpus (288 runs, 1628 books) with the options at their defaults: no differences.
+
 ## 3.0.6 - 2026-10-07
 
 ### Added
