@@ -98,7 +98,7 @@ A copy of default_config.cfg can be found under the /templates folder.  It is re
 | | in_series           | Format of the generated tree for books in a series | {author}/{series}/{series} #{part} - {title}   |
 | | in_series_no_part   | Format for books in a series whose part number is unknown (a novella collection, a companion book): `in_series` would render `{part}` empty and leave `Series # - Title`. Set it to your `in_series` value to keep that | {author}/{series}/{series} - {title}   |
 | | no_series           | Format of the generated tree for books that are NOT in a series | {author}/{title}    |
-| | disc_folder         | Format of the folder name for multi-disc books (files whose parent folder is `cd N`, `disc N`, `disk N` or `part N`, including a codec or bitrate folder under those: `cd1/MP3/`, `cd1/MP3/64k/`) | {title} {disc}    |
+| | disc_folder         | Format of the folder name for multi-disc books (files whose parent folder is `cd N`, `disc N`, `disk N` or `part N`, including `Disc 1 of 2` / `CD 1 of 3` and a codec or bitrate folder under those: `cd1/MP3/`, `cd1/MP3/64k/`) | {title} {disc}    |
 | tokens      |         | |    |
 | | skip_series         | Used when fixid3 is true and an alt Title is generated from the id3-series data | 0   |
 | | kw_ignore           | Characters ignored when generating keywords for search | | [".", ":", "_", "[", "]", "{", "}", ",", ";", "(", ")"]    |
@@ -315,8 +315,8 @@ downloads themselves would then count as already filed.
 
 Upstream searched Audible with the whole file name as the title when the id3 tags were missing, so
 `Megan Fate Marshman - Relaxed.m4b` became `title: megan fate marshman relaxed` and found nothing. booktree now
-parses the release name (the folder under `source_path`, or the file name for a loose file; for `cd1/` layouts
-the release folder, and those discs are grouped as one book) into title, author(s), series/part and ASIN,
+parses the release name (the folder under `source_path`, or the file name for a loose file; for `cd1/` and
+`Disc 1 of 2/` layouts the release folder, and those discs are grouped as one book) into title, author(s), series/part and ASIN,
 recognising `Author - Title`, `Title - Author`,
 `Title by Author`, `Author-Title`, `Author - Series NN - Title`, `Series NN - Title - Author`, `Title, Series Book N`,
 `Title [ASIN]`, `Title [ISBN10]`, `Title [Series NN]`, `Last, First` author order, leading track numbers, and

@@ -109,6 +109,8 @@ class ParseReleaseNameTest(unittest.TestCase):
     def test_disc_folders_use_the_file_name_and_release_folder(self):
         p = parse("cd1", file_name="Brad Thor - Takedown - Unabridged.mp3")
         self.assertEqual((p["title"], p["authors"]), ("Takedown", ["Brad Thor"]))
+        p = parse("Disc 1 of 2", file_name="Brad Thor - Takedown - Unabridged.mp3")
+        self.assertEqual((p["title"], p["authors"]), ("Takedown", ["Brad Thor"]))
 
         class F:
             def __init__(self, fullPath):
@@ -124,6 +126,19 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/cd1/d1.m4b", src, "cd1"), "Along Came a Spider")
         self.assertEqual(N.groupingName(f"{src}/The Guest/Disc 01/track.mp3", src, "Disc 01"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/The Guest/part 2/track.mp3", src, "part 2"), "The Guest")
+        # Disc N of M is the same disc wrapper as Disc N / cd1 (two books that both use Disc 1 of 2/)
+        self.assertEqual(N.groupingName(f"{src}/The Guest/Disc 1 of 2/d1.mp3", src, "Disc 1 of 2"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/Disc 2 of 2/d2.mp3", src, "Disc 2 of 2"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/Disc 1 of 2/d1.mp3", src, "Disc 1 of 2"), "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/CD 1 of 3/d1.mp3", src, "CD 1 of 3"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/part 1 of 2/track.mp3", src, "part 1 of 2"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/Disc 1 of 2/MP3/d1.mp3", src, "MP3"), "The Guest")
+        # a title that merely contains those words is still the release
+        self.assertEqual(N.groupingName(f"{src}/Title Disc 2/book.m4b", src, "Title Disc 2"), "Title Disc 2")
+        self.assertFalse(N.DISC_FOLDER.match("Title Disc 2"))
+        self.assertTrue(N.DISC_FOLDER.match("Disc 1 of 2"))
+        self.assertTrue(N.DISC_FOLDER.match("CD 1 of 3"))
+        self.assertTrue(N.DISC_FOLDER.match("part 1 of 2"))
         self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/MP3/d1.mp3", src, "MP3"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/cd1/MP3/d1.mp3", src, "MP3"), "Along Came a Spider")
         # a codec folder that is not under a disc is still not the release (two books that both use MP3/)
@@ -146,6 +161,7 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/Patterson/The Guest/book.m4b", src, "The Guest"), "The Guest")
         # a disc folder sitting at the source root stays itself; a loose file uses the fallback
         self.assertEqual(N.groupingName(f"{src}/cd1/track.m4b", src, "cd1"), "cd1")
+        self.assertEqual(N.groupingName(f"{src}/Disc 1 of 2/track.m4b", src, "Disc 1 of 2"), "Disc 1 of 2")
         self.assertEqual(N.groupingName(f"{src}/loose.m4b", src, "loose.m4b"), "loose.m4b")
         self.assertEqual(N.groupingName("/elsewhere/x.m4b", src, "fallback"), "fallback")
 
@@ -251,6 +267,20 @@ class BookGroupingKeyTest(unittest.TestCase):
         self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/d2.m4b")), "The Guest")
 
+    def test_two_releases_with_disc_n_of_m_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/Disc 1 of 2/d1.mp3")
+        spider = self._bf("Along Came a Spider/Disc 1 of 2/d1.mp3")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/Disc 2 of 2/d2.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/CD 1 of 3/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/part 1 of 2/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/Disc 1 of 2/MP3/d1.mp3")), "The Guest")
+        # Title Disc 2 is a split filing name, not a disc wrapper
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Title Disc 2/book.m4b")), "Title Disc 2")
+
     def test_two_releases_with_mp3_are_not_the_same_book(self):
         import booktree
         guest = self._bf("The Guest/MP3/d1.mp3")
@@ -325,13 +355,39 @@ class BookGroupingKeyTest(unittest.TestCase):
             import shutil
             shutil.rmtree(src)
 
+    def test_last_scan_of_one_new_disc_n_of_m_pulls_in_the_older_disc(self):
+        import booktree
+        import tempfile
+        import time
+        src = tempfile.mkdtemp()
+        try:
+            for rel in ("The Guest/Disc 1 of 2/d1.mp3", "The Guest/Disc 2 of 2/d2.mp3", "Other Book/file.m4b"):
+                os.makedirs(os.path.join(src, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(src, rel), "wb") as fh:
+                    fh.write(b"x")
+            old = time.time() - 3600
+            new = time.time() + 10
+            os.utime(os.path.join(src, "The Guest/Disc 1 of 2/d1.mp3"), (old, old))
+            os.utime(os.path.join(src, "Other Book/file.m4b"), (old, old))
+            os.utime(os.path.join(src, "The Guest/Disc 2 of 2/d2.mp3"), (new, new))
+            last_run = time.time()
+            files = ["The Guest/Disc 1 of 2/d1.mp3", "The Guest/Disc 2 of 2/d2.mp3", "Other Book/file.m4b"]
+            hot = booktree.hotGroupingKeys(files, src, "/media", last_run, {}, multibook=False)
+            self.assertEqual(hot, {"The Guest"})
+            guest = [booktree.bookGroupingKey(self._bf(rel, src)) for rel in files if rel.startswith("The Guest")]
+            self.assertEqual(set(guest), {"The Guest"})
+        finally:
+            import shutil
+            shutil.rmtree(src)
+
 
 class DiscFolderTest(unittest.TestCase):
     def test_every_folder_grouped_as_a_disc_is_filed_into_a_disc_subfolder(self):
         import myx_utilities
-        for folder in ("cd1", "CD 2", "Disc 1", "disc01", "disk 1", "Disk2", "Part 2", "part 10", "Title Disc 2"):
+        for folder in ("cd1", "CD 2", "Disc 1", "disc01", "disk 1", "Disk2", "Part 2", "part 10", "Title Disc 2",
+                       "Disc 1 of 2", "CD 1 of 3", "part 1 of 2"):
             self.assertTrue(N.DISC_FOLDER.match(folder) is None or myx_utilities.isMultiCD(folder), folder)
-        for folder in ("cd1", "Disk 1", "Part 2", "Title Disc 2"):
+        for folder in ("cd1", "Disk 1", "Part 2", "Title Disc 2", "Disc 1 of 2", "CD 1 of 3"):
             self.assertTrue(myx_utilities.isMultiCD(folder), folder)
         for folder in ("Counterpart 2", "Rampart 5", "Some Book", "Chapter 3", "1984"):
             self.assertFalse(myx_utilities.isMultiCD(folder), folder)
@@ -344,11 +400,13 @@ class DiscFolderTest(unittest.TestCase):
         cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
                                     "Config/target_path/disc_folder": "{title} {disc}"})
         targets = set()
-        for disc in ("Disk 1", "Disk 2", "Part 1", "Part 2"):
+        for disc in ("Disk 1", "Disk 2", "Part 1", "Part 2", "Disc 1 of 2", "Disc 2 of 2"):
             bf = myx_classes.BookFile(f"Title/{disc}/01.mp3", f"/dl/Title/{disc}/01.mp3", "/dl", "/lib")
             targets.add(bf.getConfigTargetPath(cfg, book))
-        self.assertEqual(len(targets), 4)
+        self.assertEqual(len(targets), 6)
         self.assertIn("/lib/Author/Title/Title Disk 1", targets)
+        self.assertIn("/lib/Author/Title/Title Disc 1 of 2", targets)
+        self.assertIn("/lib/Author/Title/Title Disc 2 of 2", targets)
 
     def test_codec_folder_under_a_disc_uses_the_disc_not_mp3(self):
         # grouping walks past cd1/MP3/; filing must too or both discs target Author/Title/01.mp3
@@ -370,6 +428,9 @@ class DiscFolderTest(unittest.TestCase):
         # Title/MP3/ is a codec folder, not a disc: no extra subfolder
         bf = myx_classes.BookFile("Title/MP3/01.mp3", "/dl/Title/MP3/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+        # Disc N of M under a codec folder still files as that disc
+        bf = myx_classes.BookFile("Title/Disc 1 of 2/MP3/01.mp3", "/dl/Title/Disc 1 of 2/MP3/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title/Title Disc 1 of 2")
 
     def test_bitrate_folder_under_a_disc_uses_the_disc_not_64k(self):
         # grouping walks past cd1/MP3/64k/; filing must too or both discs target Author/Title/01.mp3

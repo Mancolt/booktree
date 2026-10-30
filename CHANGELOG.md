@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a `Disc N of M` folder (`Title/Disc 1 of 2/`, `Title/CD 1 of 3/`, the usual
+  label on a multi-disc rip) were grouped as one book named `Disc 1 of 2` and hardlinked to the first
+  match. Two discs of one release (`Disc 1 of 2/` and `Disc 2 of 2/`) were also left as separate books,
+  so an incremental `last_scan` that saw only the new disc never pulled in the older one. Grouping now
+  walks past `Disc N of M` the same way it already walks past `cd1/` and `Disc 01/`. Filing already
+  recognised those names as disc subfolders (`isMultiCD`); they used to collide only because grouping
+  never joined the discs. A folder such as `Title Disc 2` is still the release, not a disc wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
