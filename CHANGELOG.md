@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a numbered chapter folder (`Title/Chapter 01/`, `Title/Track 1/`, `Title/Ch 1/`,
+  the usual layout on a chaptered MP3 rip) were grouped as one book named `Chapter 01` and hardlinked to the
+  first match. Chapters of one release (`Chapter 01/` and `Chapter 02/`) were also left as separate books, so
+  an incremental `last_scan` that saw only the new chapter never pulled in the older ones. Grouping now walks
+  past `Chapter N` / `Track N` the same way it already walks past `cd1/` and `part 2/`. Filing recognises those
+  names as disc subfolders so identically named tracks in two chapters are not skipped. A title such as
+  `The Last Chapter 2` is still the release, not a disc wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
