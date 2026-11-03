@@ -4,6 +4,16 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a `kb` bitrate folder (`Title/64kb/`, `Title/cd1/64kb/`, the usual name
+  on an MP3 rip that writes `64kb` rather than `64k` or `64kbps`) were grouped as one book named
+  `64kb` and hardlinked to the first match. Two discs of one release (`cd1/64kb/` and `cd2/64kb/`)
+  were also filed into one flat folder, so the second disc's identically named tracks were skipped.
+  Grouping and filing now walk past those folders the same way they already walk past `64k/` and
+  `128kbps/`. A chapter folder such as `01/` is still the release (or the disc), not a bitrate wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed

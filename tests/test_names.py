@@ -137,6 +137,16 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/The Guest/MP3/64k/d1.mp3", src, "64k"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/MP3/64k/d1.mp3", src, "64k"), "Along Came a Spider")
         self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/MP3/64k/d1.mp3", src, "64k"), "The Guest")
+        # a kb bitrate folder (Title/64kb/, cd1/64kb/) is the same wrapper as 64k/ (two books that both use 64kb/)
+        self.assertEqual(N.groupingName(f"{src}/The Guest/64kb/d1.mp3", src, "64kb"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/64kb/d1.mp3", src, "64kb"), "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/128kb/d1.mp3", src, "128kb"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/64 kb/d1.mp3", src, "64 kb"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/64kb/d1.mp3", src, "64kb"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd2/64kb/d2.mp3", src, "64kb"), "The Guest")
+        self.assertTrue(N.isWrapperFolder("64kb"))
+        self.assertTrue(N.isWrapperFolder("320kb"))
+        self.assertFalse(N.isWrapperFolder("01"))
         # a title folder under cd1/ is the release, not the ancestor above the disc
         self.assertEqual(
             N.groupingName(f"{src}/Patterson/cd1/Along Came a Spider/a.m4b", src, "Along Came a Spider"),
@@ -273,6 +283,18 @@ class BookGroupingKeyTest(unittest.TestCase):
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/MP3/64k/d2.mp3")), "The Guest")
         self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/128 kbps/book.mp3")), "The Guest")
 
+    def test_two_releases_with_64kb_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/64kb/d1.mp3")
+        spider = self._bf("Along Came a Spider/64kb/d1.mp3")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/128kb/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd1/64kb/d1.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/64kb/d2.mp3")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/64 kb/book.mp3")), "The Guest")
+
     def test_normal_and_author_title_layouts_and_multibook_are_unchanged(self):
         import booktree
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/book.m4b")), "The Guest")
@@ -321,6 +343,29 @@ class BookGroupingKeyTest(unittest.TestCase):
             all_new_cutoff = old - 10
             self.assertFalse(any(os.path.getmtime(os.path.join(src, rel)) <= all_new_cutoff
                                  for rel in ("The Guest/cd1/d1.m4b", "The Guest/cd2/d2.m4b")))
+        finally:
+            import shutil
+            shutil.rmtree(src)
+
+    def test_last_scan_of_one_new_64kb_disc_pulls_in_the_older_disc(self):
+        import booktree
+        import tempfile
+        import time
+        src = tempfile.mkdtemp()
+        try:
+            for rel in ("The Guest/cd1/64kb/d1.mp3", "The Guest/cd2/64kb/d2.mp3", "Other Book/file.m4b"):
+                os.makedirs(os.path.join(src, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(src, rel), "wb") as fh:
+                    fh.write(b"x")
+            old = time.time() - 3600
+            new = time.time() + 10
+            os.utime(os.path.join(src, "The Guest/cd1/64kb/d1.mp3"), (old, old))
+            os.utime(os.path.join(src, "Other Book/file.m4b"), (old, old))
+            os.utime(os.path.join(src, "The Guest/cd2/64kb/d2.mp3"), (new, new))
+            last_run = time.time()
+            files = ["The Guest/cd1/64kb/d1.mp3", "The Guest/cd2/64kb/d2.mp3", "Other Book/file.m4b"]
+            hot = booktree.hotGroupingKeys(files, src, "/media", last_run, {}, multibook=False)
+            self.assertEqual(hot, {"The Guest"})
         finally:
             import shutil
             shutil.rmtree(src)
@@ -393,6 +438,80 @@ class DiscFolderTest(unittest.TestCase):
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
         bf = myx_classes.BookFile("Title/MP3/64k/01.mp3", "/dl/Title/MP3/64k/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+
+    def test_kb_bitrate_folder_under_a_disc_uses_the_disc_not_64kb(self):
+        # grouping walks past cd1/64kb/; filing must too or both discs target Author/Title/01.mp3
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Title")
+        book.authors = [myx_classes.Contributor("Author")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for disc in ("cd1/64kb", "cd2/64kb", "Disc 1/128kb", "disk 2/320kb"):
+            bf = myx_classes.BookFile(f"Title/{disc}/01.mp3", f"/dl/Title/{disc}/01.mp3", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(targets, {
+            "/lib/Author/Title/Title cd1",
+            "/lib/Author/Title/Title cd2",
+            "/lib/Author/Title/Title Disc 1",
+            "/lib/Author/Title/Title disk 2",
+        })
+        # Title/64kb/ is a bitrate folder, not a disc: no extra subfolder
+        bf = myx_classes.BookFile("Title/64kb/01.mp3", "/dl/Title/64kb/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+        bf = myx_classes.BookFile("Title/MP3/64kb/01.mp3", "/dl/Title/MP3/64kb/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+
+    def test_kb_bitrate_discs_hardlink_apart_and_two_titles_stay_separate(self):
+        import myx_classes
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            src, lib = os.path.join(td, "dl"), os.path.join(td, "lib")
+            os.makedirs(lib)
+            cfg = FakeConfig(td, **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}",
+                                    "Config/flags/dry_run": 0, "Config/flags/hardlink": 1, "Config/flags/no_opf": 1})
+
+            guest = myx_classes.Book(asin="B000000001", title="The Guest")
+            guest.authors = [myx_classes.Contributor("Author")]
+            mb = myx_classes.MAMBook("The Guest")
+            mb.isMatched, mb.metadata = True, "audible"
+            mb.bestAudibleMatch = guest
+            for disc in ("cd1", "cd2"):
+                d = os.path.join(src, "The Guest", disc, "64kb")
+                os.makedirs(d)
+                path = os.path.join(d, "01.mp3")
+                with open(path, "wb") as fh:
+                    fh.write(b"guest-" + disc.encode())
+                mb.files.append(myx_classes.BookFile(f"The Guest/{disc}/64kb/01.mp3", path, src, lib))
+            mb.createHardLinks(cfg)
+            cd1 = os.path.join(lib, "Author", "The Guest", "The Guest cd1", "01.mp3")
+            cd2 = os.path.join(lib, "Author", "The Guest", "The Guest cd2", "01.mp3")
+            self.assertTrue(os.path.exists(cd1))
+            self.assertTrue(os.path.exists(cd2))
+            with open(cd1, "rb") as fh:
+                self.assertEqual(fh.read(), b"guest-cd1")
+            with open(cd2, "rb") as fh:
+                self.assertEqual(fh.read(), b"guest-cd2")
+
+            spider = myx_classes.Book(asin="B000000002", title="Along Came a Spider")
+            spider.authors = [myx_classes.Contributor("Author")]
+            mb2 = myx_classes.MAMBook("Along Came a Spider")
+            mb2.isMatched, mb2.metadata = True, "audible"
+            mb2.bestAudibleMatch = spider
+            d = os.path.join(src, "Along Came a Spider", "64kb")
+            os.makedirs(d)
+            path = os.path.join(d, "01.mp3")
+            with open(path, "wb") as fh:
+                fh.write(b"spider")
+            mb2.files.append(myx_classes.BookFile("Along Came a Spider/64kb/01.mp3", path, src, lib))
+            mb2.createHardLinks(cfg)
+            other = os.path.join(lib, "Author", "Along Came a Spider", "01.mp3")
+            self.assertTrue(os.path.exists(other))
+            with open(other, "rb") as fh:
+                self.assertEqual(fh.read(), b"spider")
+            with open(cd1, "rb") as fh:
+                self.assertEqual(fh.read(), b"guest-cd1")
 
 
 
