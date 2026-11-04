@@ -4,6 +4,15 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use an `AAX/` codec folder (`Title/AAX/`, an Audible-download layout that
+  keeps the folder name after conversion to m4b) were grouped as one book named `AAX` and hardlinked
+  to the first match. Grouping now walks past `AAX/` the same way it already walks past `MP3/` and
+  `64k/`. `cd1/AAX/` and `cd2/AAX/` also get distinct disc subfolders; they used to collide in a
+  flat `Author/Title/` folder and the second disc was skipped.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed

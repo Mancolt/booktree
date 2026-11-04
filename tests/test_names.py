@@ -130,6 +130,16 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.groupingName(f"{src}/The Guest/MP3/d1.mp3", src, "MP3"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/MP3/d1.mp3", src, "MP3"), "Along Came a Spider")
         self.assertEqual(N.groupingName(f"{src}/The Guest/M4B/book.m4b", src, "M4B"), "The Guest")
+        # an AAX codec folder is not the release (two books that both use AAX/ after conversion)
+        self.assertEqual(N.groupingName(f"{src}/The Guest/AAX/book.m4b", src, "AAX"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/AAX/book.m4b", src, "AAX"),
+                         "Along Came a Spider")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/aax/book.m4b", src, "aax"), "The Guest")
+        self.assertEqual(N.groupingName(f"{src}/The Guest/cd1/AAX/d1.m4b", src, "AAX"), "The Guest")
+        # a title that merely contains those letters is not a codec folder (`^aax$` is not "AAXle")
+        self.assertFalse(N.isWrapperFolder("aaxle"))
+        self.assertFalse(N.isWrapperFolder("The AAX Files"))
+        self.assertTrue(N.isWrapperFolder("AAX"))
         # a bitrate folder is not the release (two books that both use 64k/ or MP3/64k/)
         self.assertEqual(N.groupingName(f"{src}/The Guest/64k/d1.mp3", src, "64k"), "The Guest")
         self.assertEqual(N.groupingName(f"{src}/Along Came a Spider/64k/d1.mp3", src, "64k"), "Along Came a Spider")
@@ -273,6 +283,18 @@ class BookGroupingKeyTest(unittest.TestCase):
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/MP3/64k/d2.mp3")), "The Guest")
         self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/128 kbps/book.mp3")), "The Guest")
 
+    def test_two_releases_with_aax_are_not_the_same_book(self):
+        import booktree
+        guest = self._bf("The Guest/AAX/book.m4b")
+        spider = self._bf("Along Came a Spider/AAX/book.m4b")
+        self.assertEqual(booktree.bookGroupingKey(guest), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(spider), "Along Came a Spider")
+        self.assertNotEqual(booktree.bookGroupingKey(guest), booktree.bookGroupingKey(spider))
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/aax/book.m4b")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd1/AAX/d1.m4b")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/cd2/AAX/d2.m4b")), "The Guest")
+        self.assertEqual(booktree.bookGroupingKey(self._bf("Patterson/The Guest/AAX/book.m4b")), "The Guest")
+
     def test_normal_and_author_title_layouts_and_multibook_are_unchanged(self):
         import booktree
         self.assertEqual(booktree.bookGroupingKey(self._bf("The Guest/book.m4b")), "The Guest")
@@ -392,6 +414,26 @@ class DiscFolderTest(unittest.TestCase):
         bf = myx_classes.BookFile("Title/64k/01.mp3", "/dl/Title/64k/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
         bf = myx_classes.BookFile("Title/MP3/64k/01.mp3", "/dl/Title/MP3/64k/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
+
+    def test_aax_folder_under_a_disc_uses_the_disc_not_aax(self):
+        # grouping walks past cd1/AAX/; filing must too or both discs target Author/Title/01.m4b
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Title")
+        book.authors = [myx_classes.Contributor("Author")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for disc in ("cd1/AAX", "cd2/AAX", "Disc 1/aax"):
+            bf = myx_classes.BookFile(f"Title/{disc}/01.m4b", f"/dl/Title/{disc}/01.m4b", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(targets, {
+            "/lib/Author/Title/Title cd1",
+            "/lib/Author/Title/Title cd2",
+            "/lib/Author/Title/Title Disc 1",
+        })
+        # Title/AAX/ is a codec folder, not a disc: no extra subfolder
+        bf = myx_classes.BookFile("Title/AAX/01.m4b", "/dl/Title/AAX/01.m4b", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
 
 
