@@ -515,9 +515,10 @@ class BookFile:
                 narrator=""
 
             #is this a MultiCd file? Walk past codec/bitrate wrappers under a disc
-            #(cd1/MP3/01.mp3, cd1/MP3/64k/01.mp3) so two grouped discs with the same
+            #(cd1/MP3/01.mp3, cd1/MP3/64k/01.mp3) and a title folder under a disc
+            #(cd1/Along Came a Spider/01.mp3) so two grouped discs with the same
             #track names are not filed into one flat folder.
-            disc = myx_names.discFolderFromPath(self.file) or self.getParentFolder()
+            disc = myx_names.discFolderFromPath(self.fullPath or self.file, self.sourcePath) or self.getParentFolder()
             if (not myx_utilities.isMultiCD(disc)):
                 disc = ""
 
