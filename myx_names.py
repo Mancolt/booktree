@@ -360,18 +360,35 @@ def groupingName(fullPath, sourcePath, fallback):
     return parts[0]
 
 
-def discFolderFromPath(file_path):
-    """The disc folder a media file sits in, walking past codec/bitrate wrappers.
+def discFolderFromPath(file_path, source_path=None):
+    """The disc folder a media file sits in, walking past codec/bitrate wrappers and a title folder under a disc.
 
-    `Title/cd1/MP3/64k/01.mp3` and `Title/cd2/MP3/64k/01.mp3` must return distinct discs (`cd1`, `cd2`);
-    otherwise both target the same flat folder and the second is skipped. A codec or bitrate folder
-    that is not under a disc (`Title/MP3/`, `Title/64k/`) is not a disc."""
-    parts = [p for p in os.path.normpath(file_path or "").split(os.sep) if p and p != "."]
+    `Title/cd1/MP3/64k/01.mp3` and `cd1/Along Came a Spider/01.mp3` must return `cd1` (and `cd2` for the other
+    disc); grouping already keys the latter as one book, but the first non-wrapper parent is the title, so both
+    discs used to target the same flat folder and the second was skipped. Only the title folder and the disc
+    immediately above it (wrappers allowed between them) are considered: a host folder such as `/mnt/disk1/`
+    above the source is not a disc. A codec or bitrate folder that is not under a disc (`Title/MP3/`,
+    `Title/64k/`) is not a disc. A parent such as `Title Disc 2` is returned for the caller's isMultiCD check
+    (DISC_FOLDER is exact; that name is still a disc)."""
+    path = file_path or ""
+    if source_path and os.path.isabs(path):
+        try:
+            rel = os.path.relpath(path, source_path)
+        except ValueError:
+            rel = ""
+        if rel and not rel.startswith(".."):
+            path = rel
+    parts = [p for p in os.path.normpath(path).split(os.sep) if p and p != "."]
+    nearest_non_wrapper = ""
     for name in reversed(parts[:-1]):
         if isWrapperFolder(name):
             continue
-        return name
-    return ""
+        if DISC_FOLDER.match(name.strip()):
+            return name
+        if nearest_non_wrapper:
+            break
+        nearest_non_wrapper = name
+    return nearest_non_wrapper
 
 
 def releaseNameForBook(files, sourcePath, name):

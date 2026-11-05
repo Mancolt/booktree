@@ -394,6 +394,53 @@ class DiscFolderTest(unittest.TestCase):
         bf = myx_classes.BookFile("Title/MP3/64k/01.mp3", "/dl/Title/MP3/64k/01.mp3", "/dl", "/lib")
         self.assertEqual(bf.getConfigTargetPath(cfg, book), "/lib/Author/Title")
 
+    def test_title_folder_under_a_disc_uses_the_disc_not_the_title(self):
+        # grouping already keys Patterson/cd1/Along Came a Spider/ as "Along Came a Spider"; filing used
+        # to take that title folder as the disc, so cd1 and cd2 both targeted Author/Title/01.mp3
+        import myx_classes
+        book = myx_classes.Book(asin="B000000001", title="Along Came a Spider")
+        book.authors = [myx_classes.Contributor("James Patterson")]
+        cfg = FakeConfig("/tmp", **{"Config/target_path/no_series": "{author}/{title}",
+                                    "Config/target_path/disc_folder": "{title} {disc}"})
+        targets = set()
+        for rel in ("Patterson/cd1/Along Came a Spider/01.mp3", "Patterson/cd2/Along Came a Spider/01.mp3",
+                    "cd1/Along Came a Spider/01.mp3", "cd2/Along Came a Spider/01.mp3",
+                    "Patterson/cd1/Along Came a Spider/MP3/01.mp3"):
+            bf = myx_classes.BookFile(rel, f"/dl/{rel}", "/dl", "/lib")
+            targets.add(bf.getConfigTargetPath(cfg, book))
+        self.assertEqual(targets, {
+            "/lib/James Patterson/Along Came a Spider/Along Came a Spider cd1",
+            "/lib/James Patterson/Along Came a Spider/Along Came a Spider cd2",
+        })
+        # Title Disc 2/ is still a disc (isMultiCD, not DISC_FOLDER); a non-disc title is not
+        bf = myx_classes.BookFile("Title Disc 2/01.mp3", "/dl/Title Disc 2/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book),
+                         "/lib/James Patterson/Along Came a Spider/Along Came a Spider Title Disc 2")
+        bf = myx_classes.BookFile("Patterson/Along Came a Spider/01.mp3",
+                                  "/dl/Patterson/Along Came a Spider/01.mp3", "/dl", "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book),
+                         "/lib/James Patterson/Along Came a Spider")
+        self.assertEqual(N.discFolderFromPath("Patterson/cd1/Along Came a Spider/01.mp3"), "cd1")
+        self.assertEqual(N.discFolderFromPath("Patterson/cd2/Along Came a Spider/MP3/01.mp3"), "cd2")
+        self.assertEqual(N.discFolderFromPath("Title Disc 2/01.mp3"), "Title Disc 2")
+        self.assertEqual(N.discFolderFromPath("Patterson/Along Came a Spider/01.mp3"), "Along Came a Spider")
+        # log-mode absolute paths: a host folder named disk1/cd1 above the source is not a disc
+        src = "/mnt/disk1/downloads"
+        bf = myx_classes.BookFile(
+            f"{src}/Patterson/Along Came a Spider/01.mp3",
+            f"{src}/Patterson/Along Came a Spider/01.mp3", src, "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book),
+                         "/lib/James Patterson/Along Came a Spider")
+        bf = myx_classes.BookFile(
+            f"{src}/Patterson/cd1/Along Came a Spider/01.mp3",
+            f"{src}/Patterson/cd1/Along Came a Spider/01.mp3", src, "/lib")
+        self.assertEqual(bf.getConfigTargetPath(cfg, book),
+                         "/lib/James Patterson/Along Came a Spider/Along Came a Spider cd1")
+        self.assertEqual(N.discFolderFromPath(
+            f"{src}/Patterson/Along Came a Spider/01.mp3", src), "Along Came a Spider")
+        self.assertEqual(N.discFolderFromPath(
+            "/mnt/disk1/downloads/Patterson/Along Came a Spider/01.mp3"), "Along Came a Spider")
+
 
 
 class InSeriesNoPartTest(unittest.TestCase):

@@ -4,6 +4,14 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- A title folder under a disc (`cd1/Along Came a Spider/`, `cd2/Along Came a Spider/`) was grouped as one
+  book but both discs were filed into one flat `Author/Title/` folder, so a shared track name such as
+  `01.mp3` made the second disc a skip. Filing now walks up to `cd1`/`cd2` the same way grouping already
+  walks past them.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
