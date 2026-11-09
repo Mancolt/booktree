@@ -116,6 +116,19 @@ class ParseReleaseNameTest(unittest.TestCase):
         self.assertEqual(N.releaseNameForBook([F("/src/Some Release/cd1/01.mp3")], "/src", "cd1"), "Some Release")
         self.assertEqual(N.releaseNameForBook([F("/src/Loose.m4b")], "/src", "Loose.m4b"), "Loose.m4b")
         self.assertEqual(N.releaseNameForBook([F("/elsewhere/x.m4b")], "/src", "fallback"), "fallback")
+        # Author/Title and category/Release: the first component is not the release
+        self.assertEqual(N.releaseNameForBook(
+            [F("/data/torrents/downloads/Freida McFadden/The Guest/file.m4b")],
+            "/data/torrents/downloads", "The Guest"), "The Guest")
+        self.assertEqual(N.releaseNameForBook(
+            [F("/data/torrents/downloads/completed/The Guest/file.m4b")],
+            "/data/torrents/downloads", "The Guest"), "The Guest")
+        self.assertEqual(N.releaseNameForBook(
+            [F("/data/torrents/downloads/Patterson/The Guest/cd1/d1.m4b")],
+            "/data/torrents/downloads", "The Guest"), "The Guest")
+        self.assertEqual(N.releaseNameForBook(
+            [F("/src/Brad Thor - Takedown/cd1/MP3/64k/01.mp3")], "/src", "Brad Thor - Takedown"),
+            "Brad Thor - Takedown")
 
     def test_grouping_name_walks_past_disc_folders_and_keeps_releases_apart(self):
         src = "/data/downloads"

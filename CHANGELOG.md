@@ -90,6 +90,11 @@ Replay over the historical corpus (288 runs, 1628 books) with the options at the
 - `MAMBook.ffprobe` appended an author without a name (upstream; it raised `TypeError`). The method is not
   called by booktree, but it now builds named authors like the live parser.
 
+### Fixed
+- Junk-tag searches parsed the first folder under `source_path` as the release name, so an Author/Title
+  layout (`Freida McFadden/The Guest/`) or a category folder (`completed/The Guest/`) searched Audible for
+  the author or `completed` and then cached a miss. Parsing now uses the same release folder grouping does.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed

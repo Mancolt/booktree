@@ -412,6 +412,33 @@ class ParsedNameSearchTest(unittest.TestCase):
         self.assertIn('\tauthors:"Megan Fate Marshman"', out)
         self.assertIn("\tkeywords:relaxed megan fate marshman", out)
 
+    def test_author_title_and_category_layouts_parse_the_release_folder(self):
+        # releaseNameForBook used the first path component under source, so Patterson/The Guest/
+        # and completed/The Guest/ with junk tags searched Audible for "Patterson" / "completed"
+        guest = product("B0GUEST001", "The Guest", ["Freida McFadden"], 400)
+        layouts = (
+            "/data/torrents/downloads/Freida McFadden/The Guest/file.m4b",
+            "/data/torrents/downloads/completed/The Guest/file.m4b",
+            "/data/torrents/downloads/Patterson/The Guest/cd1/d1.m4b",
+        )
+        for full in layouts:
+            with self.subTest(full=full), tempfile.TemporaryDirectory() as td:
+                cfg = FakeConfig(td)
+                client = FakeAudible(search=[guest])
+                mb = myx_classes.MAMBook("The Guest")
+                rel = full.split("/data/torrents/downloads/", 1)[1]
+                bf = myx_classes.BookFile(rel, full, "/data/torrents/downloads", "/data/Audiobooks")
+                bf.ffprobeBook = id3_book("AudioTrack 01", ["unknown artist"], 400 * 60)
+                mb.files.append(bf)
+                mb.ffprobeBook = bf.ffprobeBook
+                best, out = run(mb, client, cfg)
+            self.assertEqual(best.asin, "B0GUEST001", full)
+            self.assertIn("Parsed release name 'The Guest': title:'The Guest'", out)
+            self.assertNotIn("Parsed release name 'Freida McFadden'", out)
+            self.assertNotIn("Parsed release name 'completed'", out)
+            self.assertNotIn("Parsed release name 'Patterson'", out)
+            self.assertIn("\ttitle:The Guest\n", out)
+
     def test_good_id3_is_left_alone(self):
         with tempfile.TemporaryDirectory() as td:
             cfg = FakeConfig(td)
