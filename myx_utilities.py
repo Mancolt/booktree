@@ -457,11 +457,11 @@ def loadFromCache(key, category, cfg):
     except (OSError, ValueError):
         return None
     
-#the disc-folder vocabulary must cover everything myx_names.DISC_FOLDER groups into one book (cd/disc/disk/part N),
+#the disc-folder vocabulary must cover everything myx_names.DISC_FOLDER groups into one book (cd/disc/disk/part/d N),
 #or two grouped discs with the same file names would be filed into one flat folder and the second silently skipped.
 #cd/disc stay unanchored as upstream had them ("Title Disc 2" is a disc folder too); part needs a word boundary
-#so that a title such as "Counterpart 2" is not mistaken for one.
-MULTI_CD = re.compile(r"(?:cd|disc|disk)\s?\d+|\bpart\s?\d+", re.IGNORECASE)
+#so "Counterpart 2" is not a disc; a bare d N is the whole name ("D1", not "The D1" or "Word1").
+MULTI_CD = re.compile(r"(?:cd|disc|disk)\s?\d+|\bpart\s?\d+|^d\s*\d+$", re.IGNORECASE)
 
 
 def isMultiCD(parent):

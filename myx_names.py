@@ -33,7 +33,7 @@ TRACK_PREFIX = re.compile(r"^\s*(?:(0\d{1,2}|\d{1,3}\.\d)\s+|(\d{1,3})\s*[-_.)]\
 SERIES_ABBREV = re.compile(r"^[A-Z]{1,4}\s?\d{1,3}(?:[.\-]\d)?$")
 SUBTITLE_NOISE = re.compile(r"^an?\s+(?:\w+\s+){0,3}(?:novel|thriller|mystery|story|memoir|novella|series)$", re.IGNORECASE)
 TITLE_TAIL = re.compile(r"[\s:,]+an?\s+(?:novel|thriller|mystery|memoir|novella)$", re.IGNORECASE)
-DISC_FOLDER = re.compile(r"^(cd|disc|disk|part)\s*\d+$", re.IGNORECASE)
+DISC_FOLDER = re.compile(r"^(cd|disc|disk|part|d)\s*\d+$", re.IGNORECASE)
 FORMAT_FOLDER = re.compile(r"^(mp3|m4b|m4a|flac|ogg|opus|aac|wma|mp4)$", re.IGNORECASE)
 # torrent quality folders that sit under (or instead of) a codec folder: Title/64k/, Title/MP3/128kbps/
 BITRATE_FOLDER = re.compile(r"^\d{2,3}\s?k(?:bps)?$", re.IGNORECASE)
@@ -54,7 +54,7 @@ DASHES = "-–—‑"
 BY_RE = re.compile(r"^(?P<title>.+?)\s+by\s+(?P<author>[A-Z][^-–—]+)$")
 # applied to stripped text: no adjacent optional whitespace quantifiers (they backtrack in O(n^3) on long tags)
 # junk: "AudioTrack 01", "Chapter 3", "cd1", "01", "007"; but "1984" or "2666" are titles
-JUNK_TITLE = re.compile(r"^(?:(?:(?:audio)?track|chapter|ch|part|cd|disc|disk|untitled|unknown|title)\s*\d*|0\d*|\d{1,2})$", re.IGNORECASE)
+JUNK_TITLE = re.compile(r"^(?:(?:(?:audio)?track|chapter|ch|part|cd|disc|disk|d|untitled|unknown|title)\s*\d*|0\d*|\d{1,2})$", re.IGNORECASE)
 JUNK_AUTHOR = re.compile(r"^(?:unknown(?: artist)?|various(?: artists)?|artist|author|\d+|)$", re.IGNORECASE)
 MAX_NAME_LEN = 512          # file names are <= 255 bytes; anything longer comes from a log file and is truncated
 STOPWORDS = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "is", "it", "my", "your", "his", "her",
@@ -337,9 +337,9 @@ def parseReleaseName(name, known_authors=(), file_name=None):
 
 
 def groupingName(fullPath, sourcePath, fallback):
-    """The folder that identifies a book: the release under `sourcePath`, walking past cd/disc/disk/part N
+    """The folder that identifies a book: the release under `sourcePath`, walking past cd/disc/disk/part/d N
     parents, codec folders (`MP3/`, `M4B/`, `cd1/MP3/`) and bitrate folders (`64k/`, `MP3/128kbps/`).
-    Two discs of one release become one book; two releases that both use `cd1/`, `MP3/` or `64k/` stay
+    Two discs of one release become one book; two releases that both use `cd1/`, `D1/`, `MP3/` or `64k/` stay
     separate. Author/Title layouts still key on the immediate (non-wrapper) parent. Falls back to
     `fallback` for a loose file or a path outside the source."""
     try:
@@ -353,7 +353,7 @@ def groupingName(fullPath, sourcePath, fallback):
         return fallback
     for i in range(len(parts) - 2, -1, -1):
         name = parts[i].strip()
-        # cd1/ itself, and a codec/bitrate folder (Title/MP3/, Title/64k/, cd1/MP3/64k/), are not the release
+        # cd1/ or D1/ itself, and a codec/bitrate folder (Title/MP3/, Title/64k/, cd1/MP3/64k/), are not the release
         if DISC_FOLDER.match(name) or isWrapperFolder(name):
             continue
         return parts[i]
