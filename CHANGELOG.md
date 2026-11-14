@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a numbered volume folder (`Title/Volume 1/`, `Title/Vol 1/`, `Title/Vol. 1/`,
+  the usual layout on a multi-volume CD rip) were grouped as one book named `Volume 1` and hardlinked to the
+  first match. Volumes of one release (`Volume 1/` and `Volume 2/`) were also left as separate books, so
+  an incremental `last_scan` that saw only the new volume never pulled in the older ones. Grouping now walks
+  past `Volume N` / `Vol N` the same way it already walks past `cd1/` and `part 2/`. Filing recognises those
+  names as disc subfolders so identically named tracks in two volumes are not skipped. A title such as
+  `The Volume 1` is still the release, not a disc wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
