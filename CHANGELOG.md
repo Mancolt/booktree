@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a cassette/vinyl side folder (`Title/Side A/`, `Title/Side B/`, `Title/Side 1/`,
+  the usual layout on a two-sided rip) were grouped as one book named `Side A` and hardlinked to the
+  first match. Sides of one release (`Side A/` and `Side B/`) were also left as separate books, so
+  an incremental `last_scan` that saw only the new side never pulled in the older one. Grouping now walks
+  past `Side A` / `Side B` / `Side N` the same way it already walks past `cd1/` and `part 2/`. Filing
+  recognises those names as disc subfolders so identically named tracks on two sides are not skipped. A
+  title such as `The Other Side` is still the release, not a disc wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
