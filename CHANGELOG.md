@@ -4,6 +4,17 @@ All notable changes to this fork. Upstream history before the fork point is in t
 point is tag `upstream-baseline`. Versions continue upstream's numbering (its last tag was `2.2.0-beta`); the fork's
 first release is 3.0.0 because exit codes and the cookie store changed in ways a caller can notice.
 
+## Unreleased
+
+### Fixed
+- Two releases that both use a cassette-rip folder (`Title/Cassette 1/`, `Title/Tape 1/`, the usual
+  layout on a cassette transfer) were grouped as one book named `Cassette 1` and hardlinked to the
+  first match. Cassettes of one release (`Cassette 1/` and `Cassette 2/`) were also left as separate
+  books, so an incremental `last_scan` that saw only the new cassette never pulled in the older one.
+  Grouping now walks past `Cassette N` / `Tape N` the same way it already walks past `cd1/` and
+  `part 2/`. Filing recognises those names as disc subfolders so identically named tracks on two
+  cassettes are not skipped. A title such as `Red Tape` is still the release, not a disc wrapper.
+
 ## 3.0.9 - 2026-10-27
 
 ### Fixed
