@@ -408,6 +408,24 @@ class LibraryTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertIsNone(myx_library.alreadyFiled(cfg, [self.source_file, second]))
 
+    def test_cassette_subfolders_of_one_book_count_as_already_filed(self):
+        # default disc_folder is `{title} {disc}`: Title/The Guest Cassette 1 and Title/The Guest Cassette 2
+        # are one filed book. isMultiCD must see those names the same way it sees `Title cd1`.
+        cfg = self.cfg(**{"Config/dedupe_roots": [self.lib]})
+        second = os.path.join(self.src, "Some Book", "cassette-2.m4b")
+        with open(second, "wb") as fh:
+            fh.write(b"\x00" * 16)
+        title = os.path.join(self.lib, "Author", "Some Book")
+        for disc, source in (("Some Book Cassette 1", self.source_file), ("Some Book Cassette 2", second)):
+            os.makedirs(os.path.join(title, disc))
+            os.link(source, os.path.join(title, disc, os.path.basename(source)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(myx_library.alreadyFiled(cfg, [self.source_file, second]), title)
+        os.rename(os.path.join(title, "Some Book Cassette 2"), os.path.join(self.lib, "Author", "Other Title"))
+        myx_library.reset()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(myx_library.alreadyFiled(cfg, [self.source_file, second]))
+
     def test_pinned_or_refreshed_book_is_filed_even_when_a_copy_exists(self):
         # the copy in the library is the wrong match being corrected: dedupe must not block the pin
         import booktree
