@@ -612,6 +612,25 @@ class ParsedAuthorsMamRankingTest(unittest.TestCase):
         self.assertIsNone(best)
         self.assertIn("This book doesn't have a matching title or author", out)
 
+    def test_good_id3_author_and_title_still_reject_a_different_book_by_that_author(self):
+        # usable id3 title AND artist: parse does not apply, so the author-only gate used to accept
+        # Patterson's Along Came a Spider as The Guest (token_sort 67 >= matchrate 60). MAM search is
+        # the file basename (`file.m4b` / `01.mp3`), which is how the wrong snatched hit is returned.
+        best, out = self._run("The Guest",
+                              id3_book("The Guest", ["James Patterson"], 400 * 60),
+                              [_mam_book("Along Came a Spider", ["James Patterson"])])
+        self.assertIsNone(best)
+        self.assertIn("This book doesn't have a matching title or author", out)
+        self.assertNotIn("Using parsed release name", out)
+
+    def test_good_id3_author_and_title_still_accept_the_matching_title(self):
+        best, out = self._run("The Guest",
+                              id3_book("The Guest", ["James Patterson"], 400 * 60),
+                              [_mam_book("The Guest", ["James Patterson"])])
+        self.assertIsNotNone(best)
+        self.assertEqual(best.title, "The Guest")
+        self.assertNotIn("Using parsed release name", out)
+
 
 class NarratorInArtistTagTest(unittest.TestCase):
     def secrets(self):

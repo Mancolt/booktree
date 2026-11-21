@@ -90,6 +90,13 @@ Replay over the historical corpus (288 runs, 1628 books) with the options at the
 - `MAMBook.ffprobe` appended an author without a name (upstream; it raised `TypeError`). The method is not
   called by booktree, but it now builds named authors like the live parser.
 
+### Fixed
+- MAM ranking accepted a different snatched book by the same author when the id3 title and artist were
+  already usable: search is by filename (`01.mp3`, `file.m4b`), and the author-only gate skipped the title
+  check unless the release name had to supply title or authors. `The Guest` tagged as James Patterson was
+  filed as *Along Came a Spider* (token_sort 67, above `matchrate` 60). Ranking now requires a title match
+  whenever the id3/parsed title is not junk, and applies `Config/matchrate` the same way Audible already did.
+
 ## 3.0.4 - 2026-09-22
 
 ### Fixed
